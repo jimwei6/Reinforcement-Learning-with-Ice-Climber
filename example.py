@@ -4,7 +4,8 @@ def main():
     env = retro.make(game='IceClimber-Nes')
     obs = env.reset()
     while True:
-        obs, rew, terminated, truncated, info  = env.step(env.action_space.sample())
+        action = env.action_space.sample()
+        obs, rew, terminated, truncated, info  = env.step(action)
         env.render()
         if terminated:
             obs = env.reset()
