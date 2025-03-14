@@ -69,10 +69,11 @@ class DQN(nn.Module):
             action_num = np.random.randint(self.output_dim)
             actions = self.convert_nums_to_actions([action_num])
         else: # exploit
-            obs = obs.to(device=self.device) # (1, C, H, W)
-            action_values = self.online_net(obs)
-            action_num = torch.argmax(action_values, axis=1).item()
-            actions = self.convert_nums_to_actions([action_num])
+            with torch.no_grad():
+                obs = obs.to(device=self.device) # (1, C, H, W)
+                action_values = self.online_net(obs)
+                action_num = torch.argmax(action_values, axis=1).item()
+                actions = self.convert_nums_to_actions([action_num])
 
         self.exploration_rate *= self.exploration_rate_decay # decay exploration rate
         self.exploration_rate = max(self.exploration_rate_min, self.exploration_rate)
