@@ -24,7 +24,7 @@ class DQNLogger(Logger):
       self.ep_rewards = []
       self.mean_ep_loss = []
       self.ep_length = []
-      self.ep_max_level = []
+      self.ep_max_height = []
       self.ep_ending = []
       self.ep_final_info = []
       self.reset_episode()
@@ -45,7 +45,7 @@ class DQNLogger(Logger):
           "ep_rewards": self.ep_rewards,
           "mean_ep_loss": self.mean_ep_loss,
           "ep_length": self.ep_length,
-          "ep_max_level": self.ep_max_level,
+          "ep_max_level": self.ep_max_height,
           "ep_ending": self.ep_ending,
           "ep_final_info": self.ep_final_info
       }
@@ -53,22 +53,25 @@ class DQNLogger(Logger):
       with open(self.log_path, "w") as json_file:
           json.dump(log_data, json_file, indent=4)
       
-  def log_episode(self, max_level, final_info, ending="truncated"):
+  def log_episode(self, final_info, ending="truncated"):
       self.ep_rewards.append(self.curr_ep_reward)
       self.ep_length.append(self.curr_ep_length)
       self.mean_ep_loss.append(np.mean(self.curr_ep_loss))
-      self.ep_max_level.append(max_level)
+      self.ep_max_height.append(self.curr_ep_max_height)
       self.ep_ending.append(ending)
       self.ep_final_info.append(final_info)
       self.reset_episode()
       self.save()
      
-  def log_step(self, loss, reward):
+  def log_step(self, loss, reward, height):
       self.curr_ep_loss.append(loss)
       self.curr_ep_length += 1
       self.curr_ep_reward += reward
+      self.curr_ep_max_height = max(self.curr_ep_max_height, height)
 
   def reset_episode(self):
       self.curr_ep_reward = 0
       self.curr_ep_length = 0
       self.curr_ep_loss = []
+      self.curr_ep_max_height = 1
+      
