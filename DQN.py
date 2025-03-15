@@ -15,14 +15,14 @@ class DQN(nn.Module):
                  eps_end = 0.05,
                  eps_decay = 0.99999975,
                  batch_size = 64,
-                 gamma = 0.99,
+                 gamma = 0.95,
                  tau = 0.005,
                  lr = 1e-4,
-                 start_learning=256,
+                 start_learning=128,
                  replay_size=512,
                  loss_fn=nn.SmoothL1Loss,
-                 learn_per_n_steps=1,
-                 name="DQN"):
+                 name="DQN",
+                 learn_per_n_steps=2):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.online_net = self.create_net(input_shape, output_dim).to(device=self.device)
@@ -128,14 +128,58 @@ class DQN(nn.Module):
             return loss
         return None
 
-    def save(self, path):
+    def save(self, path, episode):
         log_dir = os.path.dirname(path)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
-        torch.save(
-            dict(online=self.online_net.state_dict(), targe=self.target_net.state_dict(), exploration_rate=self.exploration_rate),
-            path
-        )
+        torch.save(self.make_save_obj(episode),
+            path)
+        
+    def make_save_obj(self, episode):
+        return {
+              'online': self.online_net.state_dict(), 
+              'target': self.target_net.state_dict(),
+              'exploration_rate': self.exploration_rate,
+              'output_dim': self.output_dim,
+              'batch_size': self.batch_size,
+              'gamma': self.gamma,
+              'tau': self.tau,
+              'exploration_rate_decay': self.exploration_rate_decay,
+              'exploration_rate_min': self.exploration_rate_min,
+              'steps': self.steps,
+              'start_learning': self.start_learning,
+              'loss_fn': self.loss_fn.__class__.__name__,
+              'name': self.name,
+              'learn_per_n_steps': self.learn_per_n_steps,
+              'optimizer': self.optimizer.state_dict(),
+              'episode': episode
+        }
+
+    def load(self, path):
+        if os.path.isfile(path):
+            checkpoint = torch.load(path)
+            self.load_checkpoint(checkpoint)
+            print(f"Model loaded successfully")
+        else:
+            print(f"Error: The file {path} does not exist.")
+
+    def load_checkpoint(self, checkpoint):
+        self.online_net.load_state_dict(checkpoint['online'])
+        self.target_net.load_state_dict(checkpoint['target'])
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        self.exploration_rate = checkpoint['exploration_rate']
+        self.output_dim = checkpoint['output_dim']
+        self.batch_size = checkpoint['batch_size']
+        self.gamma = checkpoint['gamma']
+        self.tau = checkpoint['tau']
+        self.exploration_rate_decay = checkpoint['exploration_rate_decay']
+        self.exploration_rate_min = checkpoint['exploration_rate_min']
+        self.steps = checkpoint['steps']
+        self.start_learning = checkpoint['start_learning']
+        self.name = checkpoint['name']
+        self.learn_per_n_steps = checkpoint['learn_per_n_steps']
+        loss_fn_class = getattr(torch.nn, checkpoint['loss_fn'])
+        self.loss_fn = loss_fn_class()
 
 class PRDQN(DQN):
     def __init__(self,
@@ -145,14 +189,14 @@ class PRDQN(DQN):
                  eps_end = 0.05,
                  eps_decay = 0.99999975,
                  batch_size = 64,
-                 gamma = 0.99,
+                 gamma = 0.95,
                  tau = 0.005,
                  lr = 1e-4,
-                 start_learning=256,
+                 start_learning=128,
                  replay_size=512,
                  loss_fn=nn.SmoothL1Loss,
                  name="PRDQN",
-                 learn_per_n_steps=1):
+                 learn_per_n_steps=2):
         super().__init__(input_shape,
                           output_dim,
                           eps_start = eps_start,
@@ -266,14 +310,14 @@ class DuelingPRDQN(PRDQN):
                  eps_end = 0.05,
                  eps_decay = 0.99999975,
                  batch_size = 64,
-                 gamma = 0.99,
+                 gamma = 0.95,
                  tau = 0.005,
                  lr = 1e-4,
-                 start_learning=256,
+                 start_learning=128,
                  replay_size=512,
                  loss_fn=nn.SmoothL1Loss,
                  name="DuelingPRDQN",
-                 learn_per_n_steps=1):
+                 learn_per_n_steps=2):
         super().__init__(input_shape,
                           output_dim,
                           eps_start = eps_start,
@@ -299,15 +343,15 @@ class NstepDuelingPRDQN(DuelingPRDQN):
                  eps_end = 0.05,
                  eps_decay = 0.99999975,
                  batch_size = 64,
-                 gamma = 0.99,
+                 gamma = 0.95,
                  tau = 0.005,
                  lr = 1e-4,
-                 start_learning=256,
+                 start_learning=128,
                  replay_size=512,
                  loss_fn=nn.SmoothL1Loss,
                  name="NstepDuelingPRDQN",
-                 learn_per_n_steps=1,
-                 n_steps=4):
+                 learn_per_n_steps=2,
+                 n_steps=6):
         super().__init__(input_shape,
                           output_dim,
                           eps_start = eps_start,
@@ -366,3 +410,12 @@ class NstepDuelingPRDQN(DuelingPRDQN):
             "reward": n_step_reward,
             "done": n_step_done,
             "td_error": td_error}, batch_size=[]))
+    
+    def make_save_obj(self, episode):
+        obj = super().make_save_obj(episode)
+        obj['n_steps'] = self.n_steps
+        return obj
+
+    def load_checkpoint(self, checkpoint):
+        super().load_checkpoint(checkpoint)
+        self.n_steps = checkpoint['n_steps']
