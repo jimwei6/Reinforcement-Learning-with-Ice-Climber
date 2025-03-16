@@ -64,7 +64,7 @@ def calculate_reward(info, next_info, truncated, terminated, logger):
                 rew -= 0.02
             else: # character is below max height
                 rew -= 0.1
-        return max(1, min(-1, rew)) # keep rewards between [-1, 1]
+        return max(-1, min(1, rew)) # keep rewards between [-1, 1]
             
 def main(agent_class, dir, checkpoint=None):
     SAVE_EVERY = 100
@@ -78,7 +78,6 @@ def main(agent_class, dir, checkpoint=None):
     for episode in range(1000):
         obs, info = env.reset()
         ending = ""
-        step = 0
         while True:
             action, action_num = agent.act(obs[np.newaxis, np.newaxis, :, :])
             next_obs, _, terminated, truncated, next_info  = env.step(action[0])
@@ -87,9 +86,8 @@ def main(agent_class, dir, checkpoint=None):
             agent.cache(obs, next_obs, action, action_num, reward, done)
             obs = next_obs
             info = next_info
-            loss = agent.optimize()
-            if loss is not None: # after buffer warm up starts
-                logger.log_step(loss, reward, info['height'])
+            loss = agent.optimize() # can be None if agent does not optimize in this step
+            logger.log_step(loss, reward, info['height'], action[0])
             if done:
                 if truncated:
                     ending = "truncated"
