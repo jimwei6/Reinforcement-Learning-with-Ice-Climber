@@ -1,6 +1,6 @@
 # Referenced implementations from stable-retro, pytorch mario tutorial
 import retro
-from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation
+from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopResetEnv
 from gymnasium.wrappers.time_limit import TimeLimit
 from DQN import DQN, PRDQN, DuelingPRDQN, NstepDuelingPRDQN
 from logger import DQNLogger
@@ -11,6 +11,7 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
     env = retro.make('IceClimber-Nes', retro.State.DEFAULT, use_restricted_actions=restricted_actions, players=1)
     env = FrameSkip(env, skip_frames=skip_frames) # 4 steps per action
     env = NormalizeObservation(env, shape=resize)
+    env = NoopResetEnv(env)
     if max_episodes is not None: # add max episode length
         env = TimeLimit(env, max_episode_steps=max_episodes)
     if gray_scale:

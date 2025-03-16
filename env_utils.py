@@ -1,15 +1,13 @@
 # Code reference from pytorch
 import gymnasium as gym
 import torchvision.transforms as T
+import random
 
 # Basic frame skip - apply same action per n amount of frames
 class FrameSkip(gym.Wrapper):
     def __init__(self, env, skip_frames=1):
-        gym.Wrapper.__init__(self, env)
+        super().__init__(env)
         self.skip_frames = skip_frames
-
-    def reset(self, **kwargs):
-        return self.env.reset(**kwargs)
 
     def step(self, action):
         terminated = False
@@ -46,4 +44,18 @@ class NormalizeObservation(gym.ObservationWrapper):
         observation = transforms(observation)
         return observation
 
-        
+# run random actions when an environment is reset (helps with random initialization) references pytorch & stablebaselines
+class NoopResetEnv(gym.Wrapper):
+    def __init__(self, env, noop_max=30):
+        super().__init__(env)
+        self.noop_max = noop_max
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        noops = random.randint(0, self.noop_max)
+
+        for i in range(noops):
+            obs, _, terminated, truncated, info = self.env.step(self.env.action_space.sample())
+            if terminated or truncated:
+                obs, info = self.env.reset(**kwargs)
+        return obs, info
