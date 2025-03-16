@@ -46,7 +46,7 @@ class NormalizeObservation(gym.ObservationWrapper):
 
 # run random actions when an environment is reset (helps with random initialization) references pytorch & stablebaselines
 class NoopResetEnv(gym.Wrapper):
-    def __init__(self, env, noop_max=30):
+    def __init__(self, env, noop_max=100):
         super().__init__(env)
         self.noop_max = noop_max
 
