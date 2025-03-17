@@ -92,7 +92,7 @@ class DQN(nn.Module):
         return actions, action_num
 
     def convert_nums_to_actions(self, nums):
-        return [[0, 0, 0, 0, 0] + [(num >> i) & 1 for i in range(3, -1, -1)] for num in nums]
+        return [[(num >> 3) & 1] + [0, 0, 0, 0, 0] + [(num >> i) & 1 for i in range(2, -1, -1)] for num in nums]
     
     def soft_update_target(self):
         # Soft updates

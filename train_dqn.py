@@ -44,13 +44,13 @@ def calculate_reward(info, next_info, truncated, terminated, logger):
         # hitting rewards
         if delta['bricks_hit'] > 0: # a brick was hit
             if next_info['bricks_hit'] < 40: # limit rewards you can get by hitting bricks to 40
-                rew += 0.5
+                rew += 0.25
         if delta['birds_hit'] > 0: # a bird was hit
             if next_info['birds_hit'] < 10: # limit rewards you can get by hitting birds
-                rew += 0.2
+                rew += 0.25
         if delta['ice_hit'] > 0: # ice was hit
             if next_info['ice_hit'] < 10: # limit rewards you can get by hitting ice
-                rew += 0.2
+                rew += 0.25
 
         # height based rewards
         if delta['height'] > 0: # jumped or moved up
