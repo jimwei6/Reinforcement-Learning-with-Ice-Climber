@@ -20,6 +20,10 @@
       "address": 866,
       "type": "|u1"
     },
+    "in_air": {
+      "address": 224,
+      "type": "|u1"
+    },
     "lives": {
       "address": 32,
       "type": "|i1"
