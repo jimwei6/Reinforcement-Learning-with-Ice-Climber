@@ -88,7 +88,6 @@ class DQN(nn.Module):
 
         self.update_exploration_rate()
         self.steps += 1
-
         return actions, action_num
     
     def update_exploration_rate(self):
@@ -102,7 +101,13 @@ class DQN(nn.Module):
         self.steps = 0
 
     def convert_nums_to_actions(self, nums):
-        return [[(num >> 3) & 1] + [0, 0, 0, 0, 0] + [(num >> i) & 1 for i in range(2, -1, -1)] for num in nums]
+        res = []
+        for num in nums:
+            if num == 8:     # 8 means hit
+                res.append([1, 0, 0, 0, 0, 0, 0, 0, 0])
+            else:
+                res.append([0, 0, 0, 0, 0, 0] + [int(x) for x in format(num, '03b')])
+        return res
     
     def soft_update_target(self):
         # Soft updates
