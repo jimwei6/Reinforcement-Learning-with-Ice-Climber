@@ -29,6 +29,7 @@ class DQN(nn.Module):
         self.target_net = self.create_net(input_shape, output_dim).to(device=self.device)
         self.target_net.load_state_dict(self.online_net.state_dict())
         self.memory = self.create_memory_buffer(replay_size=replay_size, device=self.device)
+        self.replay_size = replay_size
         self.optimizer = torch.optim.AdamW(self.online_net.parameters(), lr=lr, amsgrad=True)
         self.output_dim = output_dim
         self.batch_size = batch_size
@@ -43,7 +44,15 @@ class DQN(nn.Module):
         self.loss_fn = loss_fn()
         self.name = name
         self.learn_per_n_steps = learn_per_n_steps
-    
+        self.lr = lr
+        self.training = False
+  
+    def eval(self):
+        self.training = False
+
+    def train(self):
+        self.training = True
+
     def create_memory_buffer(self, replay_size, device):
         return TensorDictReplayBuffer(storage=LazyTensorStorage(replay_size, device=device))
 
@@ -76,7 +85,7 @@ class DQN(nn.Module):
     
     def act(self, obs): 
         # select based on epsilon greedy policy (trade off between exploitation and exploration)
-        if np.random.rand() < self.exploration_rate: # explore
+        if self.training and np.random.rand() < self.exploration_rate: # explore
             action_num = np.random.randint(self.output_dim)
             actions = self.convert_nums_to_actions([action_num])
         else: # exploit
@@ -86,8 +95,9 @@ class DQN(nn.Module):
                 action_num = torch.argmax(action_values, axis=1).item()
                 actions = self.convert_nums_to_actions([action_num])
 
-        self.update_exploration_rate()
-        self.steps += 1
+        if self.training:
+            self.update_exploration_rate()
+            self.steps += 1
         return actions, action_num
     
     def update_exploration_rate(self):
@@ -161,13 +171,17 @@ class DQN(nn.Module):
               'tau': self.tau,
               'exploration_rate_decay': self.exploration_rate_decay,
               'exploration_rate_min': self.exploration_rate_min,
+              'exploration_rate_max': self.exploration_rate_max,
+              'exploration_rate': self.exploration_rate,
               'steps': self.steps,
               'start_learning': self.start_learning,
               'loss_fn': self.loss_fn.__class__.__name__,
               'name': self.name,
               'learn_per_n_steps': self.learn_per_n_steps,
               'optimizer': self.optimizer.state_dict(),
-              'episode': episode
+              'episode': episode,
+              'lr': self.lr,
+              'replay_size': self.replay_size
         }
 
     def load(self, path):
@@ -189,12 +203,18 @@ class DQN(nn.Module):
         self.tau = checkpoint['tau']
         self.exploration_rate_decay = checkpoint['exploration_rate_decay']
         self.exploration_rate_min = checkpoint['exploration_rate_min']
+        self.exploration_rate_max = checkpoint['exploration_rate_max']
+        self.exploration_rate = checkpoint['exploration_rate']
         self.steps = checkpoint['steps']
         self.start_learning = checkpoint['start_learning']
         self.name = checkpoint['name']
         self.learn_per_n_steps = checkpoint['learn_per_n_steps']
         loss_fn_class = getattr(torch.nn, checkpoint['loss_fn'])
         self.loss_fn = loss_fn_class()
+        self.lr = checkpoint['lr']
+        self.replay_size = checkpoint['replay_size']
+        self.memory = self.create_memory_buffer(replay_size=self.replay_size, device=self.device)
+
 
 class PRDQN(DQN):
     def __init__(self,

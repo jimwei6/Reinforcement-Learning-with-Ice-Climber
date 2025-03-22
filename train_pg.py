@@ -23,7 +23,7 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
 def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY = 100):
     env = make_env(max_episodes=4000, gray_scale=True, resize=(128, 128))
     obs, info = env.reset()
-    agent = AGENT_CLASS((1, obs.shape[0], obs.shape[1]), grad_acc_batch_size=256)
+    agent = AGENT_CLASS((1, obs.shape[0], obs.shape[1]), grad_acc_batch_size=128)
     agent.train()
     logger = PGLogger(f"{dir}/{agent.name}/stats.json")
     rewardTracker = RewardTracker()
@@ -32,7 +32,7 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY = 100):
     if checkpoint is not None:
         agent.load(checkpoint)
 
-    for episode in range(1000):
+    for episode in range(2000):
         obs, info = env.reset()
         rewardTracker.reset()
         ending = ""
@@ -40,6 +40,7 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY = 100):
         ep_acts = []
         ep_rewards = []
         ep_next_obs = []
+
         while True:
             # get action and perform
             action, action_num = agent.act(obs[np.newaxis, np.newaxis, :, :])
@@ -63,12 +64,12 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY = 100):
             logger.log_step(None, reward, next_info['height'], action[0])
             
             # Quit episode if game ended         
-            if done:
+            if done or next_info['lives'] < 3:
                 if truncated:
                     ending = "truncated"
-                elif terminated:
-                    ending = "gameover" if next_info['lives'] < 0 else "succeed"
-                break       
+                else:
+                    ending = "gameover" if next_info['lives'] < 3 else "succeed"
+                break
 
         # Save model every N episodes
         if (episode + 1) % SAVE_EVERY == 0:

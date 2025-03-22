@@ -71,21 +71,25 @@ class VPG(nn.Module):
         for t in reversed(range(len(rewards))):
             tot_return = rewards[t] + self.gamma * tot_return
             discounted_returns[t] = tot_return
+
+        discounted_returns = (discounted_returns - discounted_returns.mean()) / (discounted_returns.std() + 1e-8)
             
         return discounted_returns
     
     def optimize_policy_batch(self, obs_tensor, actions_tensor, returns):
-        self.optimizer.zero_grad()
         loss = self.compute_loss(obs_tensor, actions_tensor, returns)
+
+        if self.grad_acc_batch_size is not None:
+            loss = loss / self.grad_acc_batch_size
         loss.backward()
-        self.optimizer.step()
         return loss.item()
     
     def optimize_policy(self, obs_tensor, actions_tensor, returns):
+        self.optimizer.zero_grad()
+        loss = 0
         if self.grad_acc_batch_size is None:
-            return self.optimize_policy_batch(obs_tensor, actions_tensor, returns)
+            loss = self.optimize_policy_batch(obs_tensor, actions_tensor, returns)
         else: # batched optimization to deal with memory size issues
-            losses = []
             num_batches = len(obs_tensor) // self.grad_acc_batch_size
             if len(obs_tensor) % self.grad_acc_batch_size != 0:
                 num_batches += 1
@@ -95,9 +99,9 @@ class VPG(nn.Module):
                 obs_batch = obs_tensor[start:end]
                 actions_batch = actions_tensor[start:end]
                 rewards_batch = returns[start:end]
-                loss = self.optimize_policy_batch(obs_batch, actions_batch, rewards_batch)
-                losses.append(loss)
-            return np.mean(losses)
+                loss += self.optimize_policy_batch(obs_batch, actions_batch, rewards_batch)
+        self.optimizer.step()
+        return loss
     
     def optimize(self, episode_obs, episode_actions, episode_rewards, episode_next_obs=None):
         returns = self.compute_returns(episode_rewards)
@@ -152,7 +156,6 @@ class AdvantageActorCritic(VPG):
                  lr = 1e-4,
                  name="AAC",
                  gamma=0.99,
-                 tau=0.95,
                  grad_acc_batch_size=None):
         super().__init__(input_shape,
                  output_dim,
@@ -162,7 +165,6 @@ class AdvantageActorCritic(VPG):
         self.value_network = self.create_value_network(input_shape).to(device=self.device)
         self.value_optimizer = torch.optim.Adam(self.value_network.parameters(), lr=lr)
         self.gamma = gamma
-        self.tau = tau
 
     def create_value_network(self, input_shape):
         c, h, w = input_shape
@@ -187,39 +189,43 @@ class AdvantageActorCritic(VPG):
         self.value_network.load_state_dict(checkpoint['value'])
         self.value_optimizer.load_state_dict(checkpoint['value_optimizer'])
 
-    def optimize_value_batch(self, values, returns):
-        self.value_optimizer.zero_grad()
+    def optimize_value_batch(self, obs_tensor, returns):
         mse = nn.MSELoss()
+        values = self.value_network(obs_tensor).flatten()
         loss = mse(values, returns)
+        if self.grad_acc_batch_size is not None:
+            loss = loss / self.grad_acc_batch_size
         loss.backward()
-        self.value_optimizer.step()
         return loss.item()
     
-    def optimize_value(self, values, returns):
+    def optimize_value(self, obs_tensor, returns):
+        self.value_optimizer.zero_grad()
+        loss = 0
         if self.grad_acc_batch_size is None:
-            return self.optimize_value_batch(values, returns)
+            loss = self.optimize_value_batch(obs_tensor, returns)
         else:
-            losses = []
-            num_batches = len(values) // self.grad_acc_batch_size
-            if len(values) % self.grad_acc_batch_size != 0:
+            num_batches = len(obs_tensor) // self.grad_acc_batch_size
+            if len(obs_tensor) % self.grad_acc_batch_size != 0:
                 num_batches += 1
 
             for i in range(num_batches):
                 start = i * self.grad_acc_batch_size
-                end = min(start + self.grad_acc_batch_size, len(values))
-                values_batch = values[start:end]
+                end = min(start + self.grad_acc_batch_size, len(obs_tensor))
+                obs_tensor_batch = obs_tensor[start:end]
                 returns_batch = returns[start:end]
-                loss = self.optimize_value_batch(values_batch, returns_batch)
-                losses.append(loss)
-            return np.mean(losses)
+                loss += self.optimize_value_batch(obs_tensor_batch, returns_batch)
+                
+        self.value_optimizer.step()
+        return loss
 
     def optimize(self, episode_obs, episode_actions, episode_rewards, episode_next_obs):
         returns = self.compute_returns(episode_rewards).detach()
-        values = self.value_network(torch.stack(episode_obs)).squeeze()
-        value_loss = self.optimize_value(values, returns)
-
-        advantages = returns - values.detach()
+        with torch.no_grad():
+            values = self.value_network(torch.stack(episode_obs)).flatten()
+        advantages = returns - values
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         obs_tensor = torch.stack(episode_obs)
         actions_tensor = torch.tensor(episode_actions, device=self.device)
+        value_loss = self.optimize_value(obs_tensor, returns)
         policy_loss = self.optimize_policy(obs_tensor, actions_tensor, advantages)
         return [policy_loss, value_loss]

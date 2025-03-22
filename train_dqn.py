@@ -21,16 +21,17 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
             
 def main(agent_class, dir, checkpoint=None):
     SAVE_EVERY = 100
-    env = make_env(max_episodes=4000, gray_scale=True, resize=(128, 128))
+    env = make_env(max_episodes=3000, gray_scale=True, resize=(128, 128))
     obs, info = env.reset()
     agent = agent_class((1, obs.shape[0], obs.shape[1]), 16)
+    agent.train()
     if checkpoint is not None:
         agent.load(checkpoint)
 
     logger = DQNLogger(f"{dir}/{agent.name}/stats.json")
     rewardTracker = RewardTracker()
 
-    for episode in range(1000):
+    for episode in range(2000):
         obs, info = env.reset()
         rewardTracker.reset()
         ending = ""
@@ -52,11 +53,11 @@ def main(agent_class, dir, checkpoint=None):
             logger.log_step(loss, reward, next_info['height'], action[0])
 
             # Quit episode if game ended         
-            if done:
+            if done or next_info['lives'] < 3:
                 if truncated:
                     ending = "truncated"
-                elif terminated:
-                    ending = "gameover" if next_info['lives'] < 0 else "succeed"
+                else:
+                    ending = "gameover" if next_info['lives'] < 3 else "succeed"
                 break
             
             # update observations and current info
