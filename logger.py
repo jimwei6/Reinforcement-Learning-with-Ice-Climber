@@ -84,4 +84,23 @@ class DQNLogger(Logger):
       self.curr_ep_loss = []
       self.curr_ep_max_height = 1
       self.curr_action_summary = np.array([0] * 4)
+
+# Epoch based compared to DQN (episode based)
+class PGLogger(DQNLogger):
+    def __init__(self, log_path):
+        super().__init__(log_path)
+        self.epoch_loss = []
+        self.epoch_reward = []
+
+    def log_episode(self, loss, final_info, ending="truncated"):
+        self.ep_rewards.append(self.curr_ep_reward)
+        self.ep_length.append(self.curr_ep_length)
+        self.mean_ep_loss.append(loss)
+        self.ep_max_height.append(self.curr_ep_max_height)
+        self.ep_ending.append(ending)
+        self.ep_final_info.append(final_info)
+        self.ep_action_summary.append(self.curr_action_summary.tolist())
+        self.reset_episode()
+        self.save()    
+
       

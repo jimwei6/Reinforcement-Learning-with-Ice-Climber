@@ -28,18 +28,19 @@ class RewardTracker():
           self.height_hammer_hits[i] = 0
 
   def update(self, info, next_info, truncated, terminated, action, delta):
+      new_delta = delta.copy()
       self.curr_ep_length += 1
       self.curr_ep_max_height = max(self.curr_ep_max_height, next_info['height'])
       self.in_air = next_info['in_air']
 
-      delta['hammer_hit'] = False
+      new_delta['hammer_hit'] = False
       # track number of hits regardless if it was viable or not. Holding spams so keep increasing hits
       if action[0] == 1:
           self.total_hits += 1
-          delta['hammer_hit'] = True
+          new_delta['hammer_hit'] = True
 
-      delta['landed'] = False
-      delta['jump_net_height'] = 0
+      new_delta['landed'] = False
+      new_delta['jump_net_height'] = 0
       if len(info) > 0:
           # track number of jumps
           if not self.jump and action[-3] == 1 and info['in_air'] == 0: # if jump is started on the ground
@@ -50,10 +51,10 @@ class RewardTracker():
 
           if self.jump and next_info['in_air'] == 1: # landed
               self.jump = False
-              delta['landed'] = True
-              delta['jump_net_height'] = next_info['height'] - self.jump_start_height
+              new_delta['landed'] = True
+              new_delta['jump_net_height'] = next_info['height'] - self.jump_start_height
               self.jump_start_height = 0
-      return delta
+      return new_delta
 
   def calculate_reward(self, info, next_info, truncated, terminated, action):      
       delta = self.calculate_info_delta(info, next_info)
