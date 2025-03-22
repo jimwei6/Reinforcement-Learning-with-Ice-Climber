@@ -11,7 +11,7 @@ class DQN(nn.Module):
     def __init__(self,
                  input_shape,
                  output_dim,
-                 eps_start = 0.9,
+                 eps_start = 0.95,
                  eps_end = 0.05,
                  eps_decay = 0.99999975,
                  batch_size = 64,
@@ -36,6 +36,7 @@ class DQN(nn.Module):
         self.tau = tau
         self.exploration_rate = eps_start
         self.exploration_rate_decay = eps_decay
+        self.exploration_rate_max = eps_start
         self.exploration_rate_min = eps_end
         self.steps = 0
         self.start_learning = max(start_learning, batch_size)
@@ -85,11 +86,20 @@ class DQN(nn.Module):
                 action_num = torch.argmax(action_values, axis=1).item()
                 actions = self.convert_nums_to_actions([action_num])
 
-        self.exploration_rate *= self.exploration_rate_decay # decay exploration rate
-        self.exploration_rate = max(self.exploration_rate_min, self.exploration_rate)
+        self.update_exploration_rate()
         self.steps += 1
 
         return actions, action_num
+    
+    def update_exploration_rate(self):
+        self.exploration_rate = self.exploration_rate_max * np.exp(-self.steps/1000) # decay exploration rate slowly across ~ 5 episodes
+        self.exploration_rate = max(self.exploration_rate_min, self.exploration_rate)
+
+    def reset_episode(self, new_max_exploration_rate=None):
+        if new_max_exploration_rate is not None:
+            self.exploration_rate_max = new_max_exploration_rate
+        self.exploration_rate = self.exploration_rate_max
+        self.steps = 0
 
     def convert_nums_to_actions(self, nums):
         return [[(num >> 3) & 1] + [0, 0, 0, 0, 0] + [(num >> i) & 1 for i in range(2, -1, -1)] for num in nums]

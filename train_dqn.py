@@ -4,6 +4,7 @@ from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopRese
 from gymnasium.wrappers.time_limit import TimeLimit
 from DQN import DQN, PRDQN, DuelingPRDQN, NstepDuelingPRDQN
 from logger import DQNLogger
+from reward import RewardTracker
 import numpy as np
 import argparse
 
@@ -17,55 +18,6 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
     if gray_scale:
         env = GrayEnvironment(env)
     return env
-
-def calculate_info_delta(info, next_info):
-    if info is None or len(info) == 0: # initial step 
-        next_info['height'] -= 1
-        return next_info
-    delta = {}
-    for k, v in info.items():
-        delta[k] = next_info[k] - info[k]
-    return delta
-
-def calculate_reward(info, next_info, truncated, terminated, logger):
-    delta = calculate_info_delta(info, next_info)
-    curr_ep_length = logger.curr_ep_length
-    curr_ep_max_height = logger.curr_ep_max_height
-    
-    if terminated: # rewards at end conditions are large 
-        if next_info['lives'] < 0:
-            return -100
-        elif next_info['height'] >= 10:
-            return 100
-    elif delta['lives'] < 0:
-        return -100
-    else:
-        rew = 0
-        # hitting rewards
-        if delta['bricks_hit'] > 0: # a brick was hit
-            if next_info['bricks_hit'] < 40: # limit rewards you can get by hitting bricks to 40
-                rew += 0.25
-        if delta['birds_hit'] > 0: # a bird was hit
-            if next_info['birds_hit'] < 10: # limit rewards you can get by hitting birds
-                rew += 0.25
-        if delta['ice_hit'] > 0: # ice was hit
-            if next_info['ice_hit'] < 10: # limit rewards you can get by hitting ice
-                rew += 0.25
-
-        # height based rewards
-        if delta['height'] > 0: # jumped or moved up
-            if next_info['height'] <= curr_ep_max_height:
-                rew += 0.9
-            else:
-                return 10 # going to new height is highly encouraged
-        elif delta['height'] < 0:
-            rew -= 1
-        else: # no change in height
-            if next_info['height'] == curr_ep_max_height: # encourages change in height
-                rew -= 0.02
-            else: # character is below max height
-                rew -= 0.1
-        return max(-1, min(1, rew)) # keep rewards between [-1, 1]
             
 def main(agent_class, dir, checkpoint=None):
     SAVE_EVERY = 100
@@ -76,27 +28,43 @@ def main(agent_class, dir, checkpoint=None):
         agent.load(checkpoint)
 
     logger = DQNLogger(f"{dir}/{agent.name}/stats.json")
+    rewardTracker = RewardTracker()
+
     for episode in range(1000):
         obs, info = env.reset()
+        rewardTracker.reset()
         ending = ""
+        agent.reset_episode(0.95 * np.exp(-episode / 10)) # decaying max rate reset to allow exploration across episodes
         while True:
+            # get action and perform
             action, action_num = agent.act(obs[np.newaxis, np.newaxis, :, :])
             next_obs, _, terminated, truncated, next_info  = env.step(action[0])
             done = terminated or truncated
-            reward = calculate_reward(info, next_info, truncated, terminated, logger)
+
+            # Calcluate rewward and store experience
+            reward = rewardTracker.calculate_reward(info, next_info, truncated, terminated, action[0])
             agent.cache(obs, next_obs, action, action_num, reward, done)
-            obs = next_obs
-            info = next_info
-            loss = agent.optimize() # can be None if agent does not optimize in this step
-            logger.log_step(loss, reward, info['height'], action[0])
+            
+            # optimize dqn; can be None if agent is not set to optimize during the step
+            loss = agent.optimize()
+
+            # log step
+            logger.log_step(loss, reward, next_info['height'], action[0])
+
+            # Quit episode if game ended         
             if done:
                 if truncated:
                     ending = "truncated"
                 elif terminated:
-                    ending = "gameover" if info['lives'] < 0 else "succeed"
+                    ending = "gameover" if next_info['lives'] < 0 else "succeed"
                 break
+            
+            # update observations and current info
+            obs = next_obs
+            info = next_info
         if (episode + 1) % SAVE_EVERY == 0:
             agent.save(f"{dir}/{agent.name}/checkpoints/ep_{episode + 1}.chkpt", episode + 1)
+        
         logger.log_episode(info, ending)
     env.close()
 

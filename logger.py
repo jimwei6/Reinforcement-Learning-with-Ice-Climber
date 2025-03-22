@@ -42,8 +42,8 @@ class DQNLogger(Logger):
                           "ep_ending": [], "ep_final_info": [],
                           "ep_action_summary": []}, json_file, indent=4)
 
-  def save(self):
-      log_data = {
+  def create_save_data(self):
+      return {
           "ep_rewards": self.ep_rewards,
           "mean_ep_loss": self.mean_ep_loss,
           "ep_length": self.ep_length,
@@ -52,7 +52,9 @@ class DQNLogger(Logger):
           "ep_final_info": self.ep_final_info,
           "ep_action_summary": self.ep_action_summary
       }
-        
+
+  def save(self):
+      log_data = self.create_save_data()
       with open(self.log_path, "w") as json_file:
           json.dump(log_data, json_file, indent=4)
       
@@ -74,6 +76,7 @@ class DQNLogger(Logger):
       self.curr_ep_reward += reward
       self.curr_ep_max_height = max(self.curr_ep_max_height, height)
       self.curr_action_summary += np.array(action[-4:])
+      self.curr_action_summary[0] += action[0]
 
   def reset_episode(self):
       self.curr_ep_reward = 0
