@@ -23,7 +23,7 @@ def main(agent_class, dir, checkpoint=None):
     SAVE_EVERY = 100
     env = make_env(max_episodes=4000, gray_scale=True, resize=(128, 128))
     obs, info = env.reset()
-    agent = agent_class((1, obs.shape[0], obs.shape[1]), 16)
+    agent = agent_class((1, obs.shape[0], obs.shape[1]))
     if checkpoint is not None:
         agent.load(checkpoint)
 
