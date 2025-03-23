@@ -34,29 +34,33 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY = 100):
 
     for episode in range(2000):
         obs, info = env.reset()
+        obs = obs[np.newaxis, np.newaxis, :, :].to(device)
         rewardTracker.reset()
         ending = ""
-        ep_obs = []
-        ep_acts = []
+        log_prob_actions = []
         ep_rewards = []
-        ep_next_obs = []
-
+        entropies = []
+        value_preds = []
         while True:
             # get action and perform
-            action, action_num = agent.act(obs[np.newaxis, np.newaxis, :, :])
+            action, log_prob_action, entropy, value_pred = agent.act(obs)
             next_obs, _, terminated, truncated, next_info  = env.step(action[0])
             done = terminated or truncated
-
+      
             # Calcluate rewward and store experience
             reward = rewardTracker.calculate_reward(info, next_info, truncated, terminated, action[0])
           
             # append trajectory
-            ep_obs.append(obs[np.newaxis, :, :].to(device=device))
-            ep_acts.append(action_num)
+            log_prob_actions.append(log_prob_action)
             ep_rewards.append(reward)
-            ep_next_obs.append(next_obs[np.newaxis, :, :].to(device=device))
+            entropies.append(entropy)
 
+            # For Actor critic methods
+            if value_pred is not None:
+              value_preds.append(value_pred)
+    
             # update obs and info
+            next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(device)
             obs = next_obs
             info = next_info  
             
@@ -76,7 +80,7 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY = 100):
             agent.save(f"{dir}/{agent.name}/checkpoints/ep_{episode + 1}.chkpt", episode + 1)
         
         # optimize model based on trajectory
-        loss = agent.optimize(ep_obs, ep_acts, ep_rewards, ep_next_obs)
+        loss = agent.optimize(torch.cat(log_prob_actions), ep_rewards, torch.cat(entropies), torch.cat(value_preds) if len(value_preds) else None)
 
         # log episode
         logger.log_episode(loss, info, ending)

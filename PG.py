@@ -12,10 +12,11 @@ class VPG(nn.Module):
     def __init__(self,
                  input_shape,
                  output_dim=9,
-                 lr = 1e-4,
+                 lr = 1e-5,
                  name="VPG",
                  grad_acc_batch_size=None,
-                 gamma=0.99):
+                 gamma=0.99,
+                 beta=0.05):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.policy = self.create_net(input_shape, output_dim).to(device=self.device)
@@ -26,6 +27,7 @@ class VPG(nn.Module):
         self.lr = lr
         self.training = False
         self.gamma = gamma
+        self.beta = beta
 
     def eval(self):
         self.training = False
@@ -44,16 +46,17 @@ class VPG(nn.Module):
             nn.ReLU(),
             nn.Flatten(),
             nn.Linear(32 * h * w, output_dim),
-            nn.Softmax(dim=1)
+            nn.Softmax(dim=-1)
         )
     
     def act(self, obs):
-        with torch.no_grad():
-            obs = obs.to(device=self.device) # (1, C, H, W)
-            action_dist = Categorical(probs=self.policy(obs))
-            action_num = action_dist.sample()
-            actions = self.convert_nums_to_actions([action_num.item()])
-        return actions, action_num
+        obs = obs.to(device=self.device) # (1, C, H, W)
+        action_dist = Categorical(self.policy(obs))
+        action_num = action_dist.sample()
+        log_prob_action = action_dist.log_prob(action_num)
+        entropy = action_dist.entropy()
+        actions = self.convert_nums_to_actions([action_num.item()])
+        return actions, log_prob_action, entropy, None
 
     def convert_nums_to_actions(self, nums):
         res = []
@@ -65,53 +68,27 @@ class VPG(nn.Module):
         return res
 
     def compute_returns(self, rewards):
-        discounted_returns = torch.zeros(len(rewards)).to(device=self.device)
+        discounted_returns = []
         tot_return = 0.0
         
-        for t in reversed(range(len(rewards))):
-            tot_return = rewards[t] + self.gamma * tot_return
-            discounted_returns[t] = tot_return
-
-        discounted_returns = (discounted_returns - discounted_returns.mean()) / (discounted_returns.std() + 1e-8)
-            
+        for rew in reversed(rewards):
+            tot_return = rew + self.gamma * tot_return
+            discounted_returns.insert(0, tot_return)
+        discounted_returns = torch.tensor(discounted_returns, device=self.device, dtype=torch.float32)
+        discounted_returns = (discounted_returns - discounted_returns.mean()) / (discounted_returns.std() + 1e-8)            
         return discounted_returns
     
-    def optimize_policy_batch(self, obs_tensor, actions_tensor, returns):
-        loss = self.compute_loss(obs_tensor, actions_tensor, returns)
-
-        if self.grad_acc_batch_size is not None:
-            loss = loss / self.grad_acc_batch_size
-        loss.backward()
-        return loss.item()
-    
-    def optimize_policy(self, obs_tensor, actions_tensor, returns):
-        self.optimizer.zero_grad()
-        loss = 0
-        if self.grad_acc_batch_size is None:
-            loss = self.optimize_policy_batch(obs_tensor, actions_tensor, returns)
-        else: # batched optimization to deal with memory size issues
-            num_batches = len(obs_tensor) // self.grad_acc_batch_size
-            if len(obs_tensor) % self.grad_acc_batch_size != 0:
-                num_batches += 1
-            for i in range(num_batches):
-                start = i * self.grad_acc_batch_size
-                end = min(start + self.grad_acc_batch_size, len(obs_tensor))
-                obs_batch = obs_tensor[start:end]
-                actions_batch = actions_tensor[start:end]
-                rewards_batch = returns[start:end]
-                loss += self.optimize_policy_batch(obs_batch, actions_batch, rewards_batch)
-        self.optimizer.step()
+    def policy_loss(self, log_prob_actions, weights, entropies):
+        loss = -(log_prob_actions * weights).mean() - entropies.mean() * self.beta
         return loss
     
-    def optimize(self, episode_obs, episode_actions, episode_rewards, episode_next_obs=None):
+    def optimize(self, log_prob_actions, episode_rewards, entropies, values=None):
+        self.optimizer.zero_grad()
         returns = self.compute_returns(episode_rewards)
-        obs_tensor = torch.stack(episode_obs)
-        actions_tensor = torch.tensor(episode_actions, device=self.device)
-        return self.optimize_policy(obs_tensor, actions_tensor, returns)
-    
-    def compute_loss(self, obs, action, weights):
-        logp = Categorical(probs=self.policy(obs)).log_prob(action)
-        return -(logp * weights).mean()
+        policy_loss = self.policy_loss(log_prob_actions, returns, entropies)
+        policy_loss.backward()
+        self.optimizer.step()
+        return policy_loss.item()
               
     def save(self, path, episode):
         log_dir = os.path.dirname(path)
@@ -128,7 +105,8 @@ class VPG(nn.Module):
               'episode': episode,
               'grad_acc_batch_size': self.grad_acc_batch_size,
               'lr': self.lr,
-              'gamma': self.gamma
+              'gamma': self.gamma,
+              'beta': self.beta
         }
 
     def load(self, path):
@@ -147,26 +125,15 @@ class VPG(nn.Module):
         self.grad_acc_batch_size = checkpoint['grad_acc_batch_size']
         self.lr = checkpoint['lr']
         self.gamma = checkpoint['gamma']
+        self.beta = checkpoint['beta']
 
-# Vanilla actor critic
-class AdvantageActorCritic(VPG):
-    def __init__(self,
-                 input_shape,
-                 output_dim=9,
-                 lr = 1e-4,
-                 name="AAC",
-                 gamma=0.99,
-                 grad_acc_batch_size=None):
-        super().__init__(input_shape,
-                 output_dim,
-                 lr,
-                 name,
-                 grad_acc_batch_size)
-        self.value_network = self.create_value_network(input_shape).to(device=self.device)
-        self.value_optimizer = torch.optim.Adam(self.value_network.parameters(), lr=lr)
-        self.gamma = gamma
+class ActorCritic(nn.Module):
+    def __init__(self, input_shape, output_dim):
+        super().__init__()
+        self.policy_net = self.create_policy_net(input_shape, output_dim)
+        self.value_net = self.create_value_net(input_shape)
 
-    def create_value_network(self, input_shape):
+    def create_value_net(self, input_shape):
         c, h, w = input_shape
         return nn.Sequential(
             nn.Conv2d(in_channels=c, out_channels=8, kernel_size=3, stride=1, padding=1),
@@ -179,53 +146,67 @@ class AdvantageActorCritic(VPG):
             nn.Linear(32 * h * w, 1),
         )
     
-    def make_save_obj(self, episode):
-        obj = super().make_save_obj(episode)
-        obj['value'] = self.value_network.state_dict()
-        obj['value_optimizer'] = self.value_optimizer.state_dict()
-        return obj
+    def create_policy_net(self, input_shape, output_dim):
+        c, h, w = input_shape
+        return nn.Sequential(
+            nn.Conv2d(in_channels=c, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(32 * h * w, output_dim),
+            nn.Softmax(dim=-1)
+        )
     
-    def load_checkpoint(self, checkpoint):
-        self.value_network.load_state_dict(checkpoint['value'])
-        self.value_optimizer.load_state_dict(checkpoint['value_optimizer'])
+    def forward(self, obs):
+        action_probs = self.policy_net(obs)
+        value = self.value_net(obs)
+        return action_probs, value
 
-    def optimize_value_batch(self, obs_tensor, returns):
+# Vanilla actor critic
+class AdvantageActorCritic(VPG):
+    def __init__(self,
+                 input_shape,
+                 output_dim=9,
+                 lr = 1e-5,
+                 name="AAC",
+                 gamma=0.99,
+                 grad_acc_batch_size=None,
+                 beta=0.05):
+        super().__init__(input_shape,
+                 output_dim=output_dim,
+                 lr = lr,
+                 name=name,
+                 gamma=gamma,
+                 grad_acc_batch_size=grad_acc_batch_size,
+                 beta=beta)
+
+    def create_net(self, input_shape, output_dim):
+        return ActorCritic(input_shape, output_dim)
+
+    def value_loss(self, values, returns):
         mse = nn.MSELoss()
-        values = self.value_network(obs_tensor).flatten()
-        loss = mse(values, returns)
-        if self.grad_acc_batch_size is not None:
-            loss = loss / self.grad_acc_batch_size
+        return mse(values, returns)
+    
+    def act(self, obs):
+        obs = obs.to(device=self.device) # (1, C, H, W)
+        action_probs, value = self.policy(obs)
+        action_dist = Categorical(action_probs)
+        action_num = action_dist.sample()
+        log_prob_action = action_dist.log_prob(action_num)
+        entropy = action_dist.entropy()
+        actions = self.convert_nums_to_actions([action_num.item()])
+        return actions, log_prob_action, entropy, value.flatten()
+    
+    def optimize(self, log_prob_actions, episode_rewards, entropies, values):
+        self.optimizer.zero_grad()
+        returns = self.compute_returns(episode_rewards)
+        policy_loss = self.policy_loss(log_prob_actions, returns, entropies)
+        value_loss = self.value_loss(values, returns)
+        loss = policy_loss + 0.5 * value_loss
         loss.backward()
+        self.optimizer.step()
         return loss.item()
     
-    def optimize_value(self, obs_tensor, returns):
-        self.value_optimizer.zero_grad()
-        loss = 0
-        if self.grad_acc_batch_size is None:
-            loss = self.optimize_value_batch(obs_tensor, returns)
-        else:
-            num_batches = len(obs_tensor) // self.grad_acc_batch_size
-            if len(obs_tensor) % self.grad_acc_batch_size != 0:
-                num_batches += 1
-
-            for i in range(num_batches):
-                start = i * self.grad_acc_batch_size
-                end = min(start + self.grad_acc_batch_size, len(obs_tensor))
-                obs_tensor_batch = obs_tensor[start:end]
-                returns_batch = returns[start:end]
-                loss += self.optimize_value_batch(obs_tensor_batch, returns_batch)
-                
-        self.value_optimizer.step()
-        return loss
-
-    def optimize(self, episode_obs, episode_actions, episode_rewards, episode_next_obs):
-        returns = self.compute_returns(episode_rewards).detach()
-        with torch.no_grad():
-            values = self.value_network(torch.stack(episode_obs)).flatten()
-        advantages = returns - values
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        obs_tensor = torch.stack(episode_obs)
-        actions_tensor = torch.tensor(episode_actions, device=self.device)
-        value_loss = self.optimize_value(obs_tensor, returns)
-        policy_loss = self.optimize_policy(obs_tensor, actions_tensor, advantages)
-        return [policy_loss, value_loss]

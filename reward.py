@@ -66,15 +66,13 @@ class RewardTracker():
       if terminated or delta['lives'] < 0: 
           if next_info['lives'] < 0 or delta['lives'] < 0:
               # penalize death more if it is at lower height
-              return -100 - 10 * min(10 - next_info['height'], 0)
+              return -10 - max(10 - next_info['height'], 0)
           elif next_info['height'] >= 10:
               # penalize excess jumps (average jumps per level - 10)
-              penalize_jumps = min((self.total_jumps / 10) - 10, 50)
+              penalize_jumps = min((self.total_jumps / 10) - 10, 5)
               # penalize excess hits 
-              penalize_hits = min((self.total_hits / 10) - 10, 50)
-              # penalize deaths
-              penalize_deaths = 25 * (3 - next_info['lives'])
-              return min(100, 300 - penalize_deaths - penalize_jumps - penalize_hits) 
+              penalize_hits = min((self.total_hits / 10) - 10, 5)
+              return max(10, 20 - penalize_jumps - penalize_hits) 
       else:
           rew = 0
           height = info['height'] if len(info) > 1 else 1
@@ -103,7 +101,7 @@ class RewardTracker():
 
           # Punish for using the hammer
           if delta['hammer_hit']: 
-              rew += -2 + 2 * np.exp(-self.height_hammer_hits[height]/50)
+              rew += -5 + 2 * np.exp(-self.height_hammer_hits[height]/50)
 
           if delta['height'] > 0: # jumped or moved up (in the air)
               if next_info['height'] <= curr_ep_max_height: # decay based on number of jumps in the level to prevent repeat jumping
@@ -114,7 +112,7 @@ class RewardTracker():
               rew += -5
           else: # no change in height
               if next_info['height'] == curr_ep_max_height: # encourages change in height but not too much to allow horizontal movements
-                  rew += -0.5
+                  rew += -5
               else: # character is below max height encourage getting back
-                  rew += -1
-          return max(-10, min(10, rew)) # keep rewards between [-10, 10]
+                  rew += -5
+          return max(-10, min(10, rew)) / 10 # keep rewards between [-1, 1]
