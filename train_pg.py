@@ -20,27 +20,37 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
         env = GrayEnvironment(env)
     return env
             
-def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY = 100):
+def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
+    # make environment
     env = make_env(max_episodes=4000, gray_scale=True, resize=(128, 128))
     obs, info = env.reset()
+
+    # make agent
     agent = AGENT_CLASS((1, obs.shape[0], obs.shape[1]), grad_acc_batch_size=128)
     agent.train()
-    logger = PGLogger(f"{dir}/{agent.name}/stats.json")
-    rewardTracker = RewardTracker()
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     # load saved agent if checkpoint provided
     if checkpoint is not None:
         agent.load(checkpoint)
 
+    # init logger and reward tracker
+    logger = PGLogger(f"{dir}/{agent.name}/stats.json")
+    rewardTracker = RewardTracker()    
+
     for episode in range(2000):
+        # reset env
         obs, info = env.reset()
-        obs = obs[np.newaxis, np.newaxis, :, :].to(device)
+        obs = obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+
+        # reset rewards
         rewardTracker.reset()
+
+        # reset episode variables
         ending = ""
         log_prob_actions = []
         ep_rewards = []
         entropies = []
         value_preds = []
+        
         while True:
             # get action and perform
             action, log_prob_action, entropy, value_pred = agent.act(obs)
@@ -60,7 +70,7 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY = 100):
               value_preds.append(value_pred)
     
             # update obs and info
-            next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(device)
+            next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
             obs = next_obs
             info = next_info  
             
@@ -98,5 +108,5 @@ if __name__ == "__main__":
         "VPG": VPG,
         "AAC": AdvantageActorCritic
     }
-    
-    main(agent_classes[args.agent], args.dir, args.checkpoint)
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    main(agent_classes[args.agent], args.dir, args.checkpoint, DEVICE=DEVICE)

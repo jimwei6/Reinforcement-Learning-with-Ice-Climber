@@ -61,7 +61,7 @@ class DQNLogger(Logger):
   def log_episode(self, final_info, ending="truncated"):
       self.ep_rewards.append(self.curr_ep_reward)
       self.ep_length.append(self.curr_ep_length)
-      self.mean_ep_loss.append(np.mean(self.curr_ep_loss))
+      self.mean_ep_loss.append(np.mean(self.curr_ep_loss) if len(self.curr_ep_loss) else None)
       self.ep_max_height.append(self.curr_ep_max_height)
       self.ep_ending.append(ending)
       self.ep_final_info.append(final_info)

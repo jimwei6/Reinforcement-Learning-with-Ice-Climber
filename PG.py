@@ -14,7 +14,6 @@ class VPG(nn.Module):
                  output_dim=9,
                  lr = 1e-5,
                  name="VPG",
-                 grad_acc_batch_size=None,
                  gamma=0.99,
                  beta=0.05):
         super().__init__()
@@ -23,7 +22,6 @@ class VPG(nn.Module):
         self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
         self.output_dim = output_dim
         self.name = name
-        self.grad_acc_batch_size = grad_acc_batch_size
         self.lr = lr
         self.training = False
         self.gamma = gamma
@@ -103,7 +101,6 @@ class VPG(nn.Module):
               'name': self.name,
               'optimizer': self.optimizer.state_dict(),
               'episode': episode,
-              'grad_acc_batch_size': self.grad_acc_batch_size,
               'lr': self.lr,
               'gamma': self.gamma,
               'beta': self.beta
@@ -122,7 +119,6 @@ class VPG(nn.Module):
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.output_dim = checkpoint['output_dim']
         self.name = checkpoint['name']
-        self.grad_acc_batch_size = checkpoint['grad_acc_batch_size']
         self.lr = checkpoint['lr']
         self.gamma = checkpoint['gamma']
         self.beta = checkpoint['beta']
@@ -173,14 +169,12 @@ class AdvantageActorCritic(VPG):
                  lr = 1e-5,
                  name="AAC",
                  gamma=0.99,
-                 grad_acc_batch_size=None,
                  beta=0.05):
         super().__init__(input_shape,
                  output_dim=output_dim,
                  lr = lr,
                  name=name,
                  gamma=gamma,
-                 grad_acc_batch_size=grad_acc_batch_size,
                  beta=beta)
 
     def create_net(self, input_shape, output_dim):

@@ -7,6 +7,7 @@ from logger import DQNLogger
 from reward import RewardTracker
 import numpy as np
 import argparse
+import torch
 
 def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_scale=False, resize=None, skip_frames=4):
     env = retro.make('IceClimber-Nes', retro.State.DEFAULT, use_restricted_actions=restricted_actions, players=1)
@@ -19,32 +20,50 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
         env = GrayEnvironment(env)
     return env
             
-def main(agent_class, dir, checkpoint=None):
-    SAVE_EVERY = 100
+def main(agent_class, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
+    # make env
     env = make_env(max_episodes=3000, gray_scale=True, resize=(128, 128))
     obs, info = env.reset()
-    agent = agent_class((1, obs.shape[0], obs.shape[1]), 16)
+
+    # make agent
+    agent = agent_class((1, obs.shape[0], obs.shape[1]))
     agent.train()
     if checkpoint is not None:
         agent.load(checkpoint)
 
+    # init logger and reward tracker
     logger = DQNLogger(f"{dir}/{agent.name}/stats.json")
     rewardTracker = RewardTracker()
 
     for episode in range(2000):
+        # reset env
         obs, info = env.reset()
+        obs = obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+
+        # reset rewards
         rewardTracker.reset()
+        
+        # reset episode variables
         ending = ""
-        agent.reset_episode(0.95 * np.exp(-episode / 10)) # decaying max rate reset to allow exploration across episodes
+
+        # reset agent exploration rate (decaying) to allow exploration across episodes
+        agent.reset_episode(0.95 * np.exp(-episode / 10))
+
         while True:
             # get action and perform
-            action, action_num = agent.act(obs[np.newaxis, np.newaxis, :, :])
+            action, action_num = agent.act(obs)
             next_obs, _, terminated, truncated, next_info  = env.step(action[0])
             done = terminated or truncated
+            next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
 
             # Calcluate rewward and store experience
             reward = rewardTracker.calculate_reward(info, next_info, truncated, terminated, action[0])
-            agent.cache(obs, next_obs, action, action_num, reward, done)
+            agent.cache(obs,
+                        next_obs,
+                        torch.tensor(action).to(DEVICE),
+                        torch.tensor([action_num]).to(DEVICE),
+                        torch.tensor([reward], dtype=torch.float32).to(DEVICE),
+                        torch.tensor([done], dtype=torch.float32).to(DEVICE))
             
             # optimize dqn; can be None if agent is not set to optimize during the step
             loss = agent.optimize()
@@ -63,6 +82,7 @@ def main(agent_class, dir, checkpoint=None):
             # update observations and current info
             obs = next_obs
             info = next_info
+
         if (episode + 1) % SAVE_EVERY == 0:
             agent.save(f"{dir}/{agent.name}/checkpoints/ep_{episode + 1}.chkpt", episode + 1)
         
@@ -83,4 +103,5 @@ if __name__ == "__main__":
         "NstepDuelingPRDQN": NstepDuelingPRDQN,
     }
     
-    main(agent_classes[args.agent], args.dir, args.checkpoint)
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    main(agent_classes[args.agent], args.dir, args.checkpoint, DEVICE=DEVICE)

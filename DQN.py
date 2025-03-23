@@ -10,7 +10,7 @@ from collections import deque
 class DQN(nn.Module):
     def __init__(self,
                  input_shape,
-                 output_dim,
+                 output_dim=9,
                  eps_start = 0.95,
                  eps_end = 0.05,
                  eps_decay = 0.99999975,
@@ -71,17 +71,11 @@ class DQN(nn.Module):
     
     def recall(self, batch_size):
         batch = self.memory.sample(batch_size)
-        state, next_state, action, action_num, reward, done = (batch.get(key) for key in ("state", "next_state", "action", "action_num", "reward", "done"))
-        return state, next_state, action, action_num, reward.squeeze(), done.squeeze()
+        obs, next_obs, action, action_num, reward, done = (batch.get(key) for key in ("obs", "next_obs", "action", "action_num", "reward", "done"))
+        return obs.squeeze(1), next_obs.squeeze(1), action, action_num, reward, done
     
-    def cache(self, state, next_state, action, action_num, reward, done):
-        action = torch.tensor(action).to(device=self.device)
-        action_num = torch.tensor([action_num]).to(device=self.device)
-        reward = torch.tensor([reward]).to(device=self.device)
-        done = torch.tensor([done]).to(device=self.device)
-        state = state[np.newaxis, :, :].to(device=self.device)
-        next_state = next_state[np.newaxis, :, :].to(device=self.device)
-        self.memory.add(TensorDict({"state": state, "next_state": next_state, "action": action, "action_num": action_num, "reward": reward, "done": done}, batch_size=[]))
+    def cache(self, obs, next_obs, action, action_num, reward, done):
+        self.memory.add(TensorDict({"obs": obs, "next_obs": next_obs, "action": action, "action_num": action_num, "reward": reward, "done": done}, batch_size=[]))
     
     def act(self, obs): 
         # select based on epsilon greedy policy (trade off between exploitation and exploration)
@@ -128,13 +122,12 @@ class DQN(nn.Module):
         self.target_net.load_state_dict(target_net_state_dict)
 
     def update_online(self):
-        state, next_state, action, action_num, reward, done = self.recall(self.batch_size)
-        td_estimate = self.online_net(state).gather(1, action_num)
-
+        obs, next_obs, action, action_num, reward, done = self.recall(self.batch_size)
+        td_estimate = self.online_net(obs).gather(1, action_num)
         with torch.no_grad():
-            online_next_actions = torch.argmax(self.online_net(next_state), axis=1)
-            target_next_values = self.target_net(next_state).gather(1, online_next_actions.unsqueeze(1))
-            td_target = reward.unsqueeze(1) + (1 - done.unsqueeze(1).float()) * self.gamma * target_next_values
+            online_next_actions = torch.argmax(self.online_net(next_obs), axis=1)
+            target_next_values = self.target_net(next_obs).gather(1, online_next_actions.unsqueeze(1))
+            td_target = reward + (1 - done) * self.gamma * target_next_values
         loss = self.loss_fn(td_estimate, td_target)
 
         self.optimizer.zero_grad()
@@ -219,7 +212,7 @@ class DQN(nn.Module):
 class PRDQN(DQN):
     def __init__(self,
                  input_shape,
-                 output_dim,
+                 output_dim=9,
                  eps_start = 0.9,
                  eps_end = 0.05,
                  eps_decay = 0.99999975,
@@ -251,24 +244,16 @@ class PRDQN(DQN):
     def create_memory_buffer(self, replay_size, device):
         return TensorDictPrioritizedReplayBuffer(storage=LazyTensorStorage(replay_size, device=device), alpha=0.5, beta=0.4)
     
-    def cache(self, state, next_state, action, action_num, reward, done):
-        action = torch.tensor(action).to(device=self.device)
-        action_num = torch.tensor([action_num]).to(device=self.device)
-        reward = torch.tensor([reward]).to(device=self.device)
-        done = torch.tensor([done]).to(device=self.device)
-        state = state[np.newaxis, :, :].to(device=self.device)
-        next_state = next_state[np.newaxis, :, :].to(device=self.device)
-
+    def cache(self, obs, next_obs, action, action_num, reward, done):
         with torch.no_grad():
-            td_estimate = self.online_net(state[np.newaxis, :, :, :]).gather(1, action_num.unsqueeze(1))
-            online_next_actions = torch.argmax(self.online_net(next_state[np.newaxis, :, :, :]), axis=1)
-            target_next_values = self.target_net(next_state[np.newaxis, :, :, :]).gather(1, online_next_actions.unsqueeze(1))
-            td_target = reward.unsqueeze(1) + (1 - done.unsqueeze(1).float()) * self.gamma * target_next_values
-            td_error = self.loss_fn(td_estimate, td_target)
-        
+            td_estimate = self.online_net(obs).gather(1, action_num.unsqueeze(1))
+            online_next_actions = torch.argmax(self.online_net(next_obs), axis=1)
+            target_next_values = self.target_net(next_obs).gather(1, online_next_actions.unsqueeze(1))
+            td_target = reward.unsqueeze(1) + (1 - done.unsqueeze(1)) * self.gamma * target_next_values
+            td_error = self.loss_fn(td_estimate, td_target).item()
         self.memory.add(TensorDict({
-            "state": state, 
-            "next_state": next_state, 
+            "obs": obs, 
+            "next_obs": next_obs, 
             "action": action, 
             "action_num": action_num, 
             "reward": reward, 
@@ -277,24 +262,22 @@ class PRDQN(DQN):
 
     def recall(self, batch_size):
         batch = self.memory.sample(batch_size)
-        state, next_state, action, action_num, reward, done, indices, weights = (batch.get(key) for key in ("state", "next_state", "action", "action_num", "reward", "done", "index", "_weight"))
-        return state, next_state, action, action_num, reward.squeeze(), done.squeeze(), indices, weights
+        obs, next_obs, action, action_num, reward, done, indices, weights = (batch.get(key) for key in ("obs", "next_obs", "action", "action_num", "reward", "done", "index", "_weight"))
+        return obs.squeeze(1), next_obs.squeeze(1), action, action_num, reward, done, indices, weights
     
     def update_online(self):
-        state, next_state, action, action_num, reward, done, indices, weights = self.recall(self.batch_size)
-        td_estimate = self.online_net(state).gather(1, action_num)
-
+        obs, next_obs, action, action_num, reward, done, indices, weights = self.recall(self.batch_size)
+        td_estimate = self.online_net(obs).gather(1, action_num)
         with torch.no_grad():
-            online_next_actions = torch.argmax(self.online_net(next_state), axis=1)
-            target_next_values = self.target_net(next_state).gather(1, online_next_actions.unsqueeze(1))
-            td_target = reward.unsqueeze(1) + (1 - done.unsqueeze(1).float()) * self.gamma * target_next_values
-
-        loss = (weights * self.loss_fn(td_estimate, td_target)).mean()
+            online_next_actions = torch.argmax(self.online_net(next_obs), axis=1)
+            target_next_values = self.target_net(next_obs).gather(1, online_next_actions.unsqueeze(1))
+            td_target = reward + (1 - done) * self.gamma * target_next_values
+        td_error = self.loss_fn(td_estimate, td_target).flatten()
+        loss = (weights * td_error).mean()
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-  
-        self.memory.update_priority(indices, loss)
+        self.memory.update_priority(indices, td_error.detach())
         return loss.item()
 
 class ValueAdvantageNet(nn.Module):
@@ -340,7 +323,7 @@ class ValueAdvantageNet(nn.Module):
 class DuelingPRDQN(PRDQN):
     def __init__(self,
                  input_shape,
-                 output_dim,
+                 output_dim=9,
                  eps_start = 0.9,
                  eps_end = 0.05,
                  eps_decay = 0.99999975,
@@ -373,7 +356,7 @@ class DuelingPRDQN(PRDQN):
 class NstepDuelingPRDQN(DuelingPRDQN):
     def __init__(self,
                  input_shape,
-                 output_dim,
+                 output_dim=9,
                  eps_start = 0.9,
                  eps_end = 0.05,
                  eps_decay = 0.99999975,
@@ -404,18 +387,10 @@ class NstepDuelingPRDQN(DuelingPRDQN):
         self.n_steps = n_steps
         self.n_step_buffer = deque()
 
-    def cache(self, state, next_state, action, action_num, reward, done):
-        action = torch.tensor(action).to(device=self.device)
-        action_num = torch.tensor([action_num]).to(device=self.device)
-        reward = torch.tensor([reward]).to(device=self.device)
-        done = torch.tensor([done]).to(device=self.device)
-        state = state[np.newaxis, :, :].to(device=self.device)
-        next_state = next_state[np.newaxis, :, :].to(device=self.device)
-
+    def cache(self, obs, next_obs, action, action_num, reward, done):
         # Accumulate n steps
-        self.n_step_buffer.append((state, next_state, action, action_num, reward, done))
-
-        if done or len(self.n_step_buffer) >= self.n_steps:
+        self.n_step_buffer.append((obs, next_obs, action, action_num, reward, done))
+        if done.item() > 0 or len(self.n_step_buffer) >= self.n_steps:
             self.process_nstep_buffer()
             if done:
                 self.n_step_buffer.clear()
@@ -423,28 +398,64 @@ class NstepDuelingPRDQN(DuelingPRDQN):
                 self.n_step_buffer.popleft()
     
     def process_nstep_buffer(self):        
-        n_step_reward = 0
-        n_step_done = self.n_step_buffer[-1][5]
-        
-        for i in range(min(self.n_steps, len(self.n_step_buffer))):
-            n_step_reward += self.n_step_buffer[i][4] * (self.gamma ** i) 
-            
-        with torch.no_grad():
-            td_estimate = self.online_net(self.n_step_buffer[0][0][np.newaxis, :, :, :]).gather(1, self.n_step_buffer[0][3].unsqueeze(1))  # Estimate Q-value for first state action in traj
-            online_next_actions = torch.argmax(self.online_net(self.n_step_buffer[-1][1][np.newaxis, :, :, :]), axis=1)  # Select next action after last state in traj
-            target_next_values = self.target_net(self.n_step_buffer[-1][1][np.newaxis, :, :, :]).gather(1, online_next_actions.unsqueeze(1))  # Get the expected value for the next state from target network
-            td_target = n_step_reward.unsqueeze(1) + (1 - n_step_done.float()) * self.gamma * target_next_values  # Compute the n-step target using accumulated rewards
-            td_error = self.loss_fn(td_estimate, td_target)  # Calculate the Temporal Difference (TD) error
+        steps = min(self.n_steps, len(self.n_step_buffer))
+        n_step_reward = sum(self.n_step_buffer[i][4] * (self.gamma ** i) for i in range(steps))
+        n_step_done = self.n_step_buffer[-1][5] # if the traj ends with done
 
+        init_step_obs = self.n_step_buffer[0][0]
+        init_step_action = self.n_step_buffer[0][2]
+        init_step_action_num = self.n_step_buffer[0][3]
+        n_step_next_obs = self.n_step_buffer[-1][1]
+        n_step_next_discount = self.gamma ** steps
+        
+        with torch.no_grad():
+            # Estimate Q-value for first state action in traj
+            td_estimate = self.online_net(init_step_obs).gather(1, init_step_action_num.unsqueeze(1)) 
+
+            # Select next action after last state in traj
+            online_next_actions = torch.argmax(self.online_net(n_step_next_obs), axis=1)  
+
+            # Get the expected value for the next state from target network taking action provided by online net
+            target_next_values = self.target_net(n_step_next_obs).gather(1, online_next_actions.unsqueeze(1))
+
+            # Compute the n-step target using accumulated rewards  
+            td_target = n_step_reward.unsqueeze(1) + (1 - n_step_done.unsqueeze(1)) * n_step_next_discount * target_next_values  
+
+            td_error = self.loss_fn(td_estimate, td_target).item()  # Calculate the Temporal Difference (TD) error
+  
         # Add the n-step transition to memory
         self.memory.add(TensorDict({
-            "state": self.n_step_buffer[0][0],
-            "next_state": self.n_step_buffer[-1][1],
-            "action": self.n_step_buffer[0][2],
-            "action_num": self.n_step_buffer[0][3],
+            "obs": init_step_obs,
+            "next_obs": n_step_next_obs,
+            "action": init_step_action,
+            "action_num": init_step_action_num,
             "reward": n_step_reward,
             "done": n_step_done,
-            "td_error": td_error}, batch_size=[]))
+            "td_error": td_error, 
+            "step": torch.tensor([steps])}, batch_size=[]))
+        
+
+    def recall(self, batch_size):
+        batch = self.memory.sample(batch_size)
+        obs, next_obs, action, action_num, reward, done, indices, weights, steps = (batch.get(key) for key in ("obs", "next_obs", "action", "action_num", "reward", "done", "index", "_weight", "step"))
+        return obs.squeeze(1), next_obs.squeeze(1), action, action_num, reward, done, indices, weights, steps
+    
+        
+    def update_online(self):
+        obs, n_step_next_obs, action, action_num, reward, done, indices, weights, steps = self.recall(self.batch_size)
+        td_estimate = self.online_net(obs).gather(1, action_num)
+        with torch.no_grad():
+            online_n_step_next_actions = torch.argmax(self.online_net(n_step_next_obs), axis=1)
+            target_n_step_next_values = self.target_net(n_step_next_obs).gather(1, online_n_step_next_actions.unsqueeze(1))
+            discount = self.gamma ** steps
+            td_target = reward + (1 - done) * discount * target_n_step_next_values
+        td_error = self.loss_fn(td_estimate, td_target).flatten()
+        loss = (weights * td_error).mean()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.memory.update_priority(indices, td_error.detach())
+        return loss.item()
     
     def make_save_obj(self, episode):
         obj = super().make_save_obj(episode)
