@@ -50,12 +50,20 @@ class NoopResetEnv(gym.Wrapper):
         super().__init__(env)
         self.noop_max = noop_max
 
+    def convert_nums_to_actions(self, num):
+        if num == 8:     # 8 means hit
+            return [1, 0, 0, 0, 0, 0, 0, 0, 0]
+        else:
+            return [0, 0, 0, 0, 0, 0] + [int(x) for x in format(num, '03b')]
+    
+
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         noops = random.randint(0, self.noop_max)
 
         for i in range(noops):
-            obs, _, terminated, truncated, info = self.env.step(self.env.action_space.sample())
+            action_num = random.randint(0, 8)
+            obs, _, terminated, truncated, info = self.env.step(self.convert_nums_to_actions(action_num))
             if terminated or truncated:
                 obs, info = self.env.reset(**kwargs)
         return obs, info
