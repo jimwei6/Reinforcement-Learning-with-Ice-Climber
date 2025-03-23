@@ -26,7 +26,7 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
     obs, info = env.reset()
 
     # make agent
-    agent = AGENT_CLASS((1, obs.shape[0], obs.shape[1]), grad_acc_batch_size=128)
+    agent = AGENT_CLASS((1, obs.shape[0], obs.shape[1]))
     agent.train()
     # load saved agent if checkpoint provided
     if checkpoint is not None:
