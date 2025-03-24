@@ -2,6 +2,16 @@
 import gymnasium as gym
 import torchvision.transforms as T
 import random
+from gymnasium.wrappers.frame_stack import FrameStack
+import torch
+
+class FrameStackMod(FrameStack):
+    def __init__(self, env, num_stack, lz4_compress = False):
+        super().__init__(env, num_stack, lz4_compress)
+
+    def observation(self, observation):
+        lazyframes = super().observation(observation)
+        return torch.tensor(lazyframes.__array__())
 
 # Basic frame skip - apply same action per n amount of frames
 class FrameSkip(gym.Wrapper):

@@ -1,6 +1,6 @@
 # Referenced implementations from stable-retro, pytorch mario tutorial
 import retro
-from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopResetEnv
+from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopResetEnv, FrameStackMod
 from gymnasium.wrappers.time_limit import TimeLimit
 from DQN import DQN, PRDQN, DuelingPRDQN, NstepDuelingPRDQN
 from logger import DQNLogger
@@ -18,15 +18,15 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
         env = TimeLimit(env, max_episode_steps=max_episodes)
     if gray_scale:
         env = GrayEnvironment(env)
+    env = FrameStackMod(env, 4) # stack frames for temporal information
     return env
             
 def main(agent_class, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda", GRAY_SCALE=False, LR=1e-4, EPISODES=1000):
     # make env
     env = make_env(max_episodes=2500, gray_scale=GRAY_SCALE, resize=(128, 128))
     obs, info = env.reset()
-    obs_shape = (1, obs.shape[0], obs.shape[1]) if GRAY_SCALE else obs.shape
     # make agent
-    agent = agent_class(obs_shape, lr=LR)
+    agent = agent_class(obs.shape, lr=LR)
     agent.train()
     if checkpoint is not None:
         agent.load(checkpoint)
@@ -38,10 +38,7 @@ def main(agent_class, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE
     for episode in range(EPISODES):
         # reset env
         obs, info = env.reset()
-        if GRAY_SCALE:
-            obs = obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
-        else:
-            obs = obs[np.newaxis, :, :].to(DEVICE)
+        obs = obs.unsqueeze(0).to(DEVICE)
 
         # reset rewards
         rewardTracker.reset()
@@ -58,10 +55,7 @@ def main(agent_class, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE
             next_obs, _, terminated, truncated, next_info  = env.step(action[0])
             done = terminated or truncated
 
-            if GRAY_SCALE:
-                next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
-            else:
-                next_obs = next_obs[np.newaxis, :, :].to(DEVICE)
+            next_obs = next_obs.unsqueeze(0).to(DEVICE)
 
             # Calcluate rewward and store experience
             reward = rewardTracker.calculate_reward(info, next_info, truncated, terminated, action[0])

@@ -1,7 +1,8 @@
 # Referenced implementations from stable-retro, pytorch mario tutorial
 import retro
-from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopResetEnv
+from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopResetEnv, FrameStackMod
 from gymnasium.wrappers.time_limit import TimeLimit
+
 from PG import VPG, AdvantageActorCritic
 from logger import PGLogger
 from reward import SparseRewardTracker, ComplexRewardTracker
@@ -18,15 +19,17 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
         env = TimeLimit(env, max_episode_steps=max_episodes)
     if gray_scale:
         env = GrayEnvironment(env)
+    
+    env = FrameStackMod(env, 4) # stack frames for temporal information
     return env
             
 def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda", GRAY_SCALE=False, LR=1e-4, EPISODES=1000):
     # make environment
-    env = make_env(max_episodes=2500, gray_scale=GRAY_SCALE, resize=(84, 84))
+    env = make_env(max_episodes=2500, gray_scale=GRAY_SCALE, resize=(128, 128))
     obs, info = env.reset()
-    obs_shape = (1, obs.shape[0], obs.shape[1]) if GRAY_SCALE else obs.shape
+
     # make agent
-    agent = AGENT_CLASS(obs_shape, lr=LR)
+    agent = AGENT_CLASS(obs.shape, lr=LR)
     agent.train()
     # load saved agent if checkpoint provided
     if checkpoint is not None:
@@ -39,11 +42,7 @@ def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE
     for episode in range(EPISODES):
         # reset env
         obs, info = env.reset()
-        if GRAY_SCALE:
-            obs = obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
-        else:
-            obs = obs[np.newaxis, :, :].to(DEVICE)
-
+        obs = obs.unsqueeze(0).to(DEVICE)
         # reset rewards
         rewardTracker.reset()
 
@@ -73,10 +72,7 @@ def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE
               value_preds.append(value_pred)
     
             # update obs and info
-            if GRAY_SCALE:
-                next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
-            else:
-                next_obs = next_obs[np.newaxis, :, :].to(DEVICE)
+            next_obs = next_obs.unsqueeze(0).to(DEVICE)
             obs = next_obs
             info = next_info  
             
