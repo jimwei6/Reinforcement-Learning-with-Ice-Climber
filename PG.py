@@ -75,8 +75,6 @@ class VPG(nn.Module):
             discounted_returns.insert(0, tot_return)
         discounted_returns = torch.tensor(discounted_returns, device=self.device, dtype=torch.float32)
         discounted_returns = (discounted_returns - discounted_returns.mean()) / (discounted_returns.std() + 1e-8)            
-        episode_length = len(rewards)
-        discounted_returns = discounted_returns / episode_length
         return discounted_returns
     
     def policy_loss(self, log_prob_actions, weights, entropies):
