@@ -59,14 +59,18 @@ class DQN(nn.Module):
     def create_net(self, input_shape, output_dim):
         c, h, w = input_shape
         return nn.Sequential(
-            nn.Conv2d(in_channels=c, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=c, out_channels=32, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(32 * h * w, output_dim),
+            nn.Linear(64 * 16 * 16, output_dim), 
+            nn.Softmax(dim=-1)
         )
     
     def recall(self, batch_size):
@@ -290,27 +294,26 @@ class ValueAdvantageNet(nn.Module):
     def create_conv_net(self, input_shape):
         c, h, w = input_shape
         return nn.Sequential(
-            nn.Conv2d(in_channels=c, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=c, out_channels=32, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Flatten(),
-        ), 32 * h * w
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Flatten(), 64 * 16 * 16
+        )
 
     def create_value_net(self, conv_out_size):
         return nn.Sequential(
-            nn.Linear(conv_out_size, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(conv_out_size, 1)
         )
     
     def create_adv_net(self, conv_out_size, output_dim):
         return nn.Sequential(
-            nn.Linear(conv_out_size, 64),
-            nn.ReLU(),
-            nn.Linear(64, output_dim)
+            nn.Linear(conv_out_size, output_dim)
         )
     
     def forward(self, data):

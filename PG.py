@@ -19,7 +19,7 @@ class VPG(nn.Module):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.policy = self.create_net(input_shape, output_dim).to(device=self.device)
-        self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, amsgrad=True)
         self.output_dim = output_dim
         self.name = name
         self.lr = lr
@@ -36,14 +36,17 @@ class VPG(nn.Module):
     def create_net(self, input_shape, output_dim):
         c, h, w = input_shape
         return nn.Sequential(
-            nn.Conv2d(in_channels=c, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=c, out_channels=32, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(32 * h * w, output_dim),
+            nn.Linear(64 * 16 * 16, output_dim), 
             nn.Softmax(dim=-1)
         )
     
