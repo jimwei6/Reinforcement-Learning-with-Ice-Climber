@@ -4,7 +4,7 @@ from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopRese
 from gymnasium.wrappers.time_limit import TimeLimit
 from PG import VPG, AdvantageActorCritic
 from logger import PGLogger
-from reward import RewardTracker
+from reward import SparseRewardTracker, ComplexRewardTracker
 import numpy as np
 import argparse
 import torch
@@ -20,13 +20,13 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
         env = GrayEnvironment(env)
     return env
             
-def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
+def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda", GRAY_SCALE=False, LR=1e-4, EPISODES=1000):
     # make environment
-    env = make_env(max_episodes=4000, gray_scale=True, resize=(128, 128))
+    env = make_env(max_episodes=2500, gray_scale=GRAY_SCALE, resize=(84, 84))
     obs, info = env.reset()
-
+    obs_shape = (1, obs.shape[0], obs.shape[1]) if GRAY_SCALE else obs.shape
     # make agent
-    agent = AGENT_CLASS((1, obs.shape[0], obs.shape[1]))
+    agent = AGENT_CLASS(obs_shape, lr=LR)
     agent.train()
     # load saved agent if checkpoint provided
     if checkpoint is not None:
@@ -34,12 +34,15 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
 
     # init logger and reward tracker
     logger = PGLogger(f"{dir}/{agent.name}/stats.json")
-    rewardTracker = RewardTracker()    
+    rewardTracker = REWARD_CLASS()    
 
-    for episode in range(2000):
+    for episode in range(EPISODES):
         # reset env
         obs, info = env.reset()
-        obs = obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+        if GRAY_SCALE:
+            obs = obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+        else:
+            obs = obs[np.newaxis, :, :].to(DEVICE)
 
         # reset rewards
         rewardTracker.reset()
@@ -53,7 +56,7 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
         
         while True:
             # get action and perform
-            action, log_prob_action, entropy, value_pred = agent.act(obs)
+            action, log_prob_action, entropy, value_pred, probs = agent.act(obs)
             next_obs, _, terminated, truncated, next_info  = env.step(action[0])
             done = terminated or truncated
       
@@ -70,12 +73,15 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
               value_preds.append(value_pred)
     
             # update obs and info
-            next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+            if GRAY_SCALE:
+                next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+            else:
+                next_obs = next_obs[np.newaxis, :, :].to(DEVICE)
             obs = next_obs
             info = next_info  
             
             # log step
-            logger.log_step(None, reward, next_info['height'], action[0])
+            logger.log_step(None, reward, next_info['height'], action[0], probs[0])
             
             # Quit episode if game ended         
             if done or next_info['lives'] < 3:
@@ -100,13 +106,21 @@ def main(AGENT_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent", type=str, choices=["VPG", "AAC"], default="VPG", help="Select the policy gradient variant")
+    parser.add_argument("--reward", type=str, choices=["SPARSE", "COMPLEX"], default="COMPLEX", help="Select the reward variant")
     parser.add_argument("--dir", type=str, default="./pg_results", help="path to store results")
     parser.add_argument("--checkpoint", type=str, default=None, help="path to checkpoint")
+    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
+    parser.add_argument('--grayscale', action='store_true', help="Convert environment to grayscale")
+    parser.add_argument('--episodes', type=int, default=1000, help="episodes to train for")
     args = parser.parse_args()
     
     agent_classes = {
         "VPG": VPG,
         "AAC": AdvantageActorCritic
     }
+    reward_classes = {
+        "SPARSE": SparseRewardTracker,
+        "COMPLEX": ComplexRewardTracker
+    }
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    main(agent_classes[args.agent], args.dir, args.checkpoint, DEVICE=DEVICE)
+    main(agent_classes[args.agent], reward_classes[args.reward], args.dir, args.checkpoint, DEVICE=DEVICE, GRAY_SCALE=args.grayscale, LR=args.lr, EPISODES=args.episodes)

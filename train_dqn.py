@@ -4,7 +4,7 @@ from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopRese
 from gymnasium.wrappers.time_limit import TimeLimit
 from DQN import DQN, PRDQN, DuelingPRDQN, NstepDuelingPRDQN
 from logger import DQNLogger
-from reward import RewardTracker
+from reward import SparseRewardTracker, ComplexRewardTracker
 import numpy as np
 import argparse
 import torch
@@ -20,25 +20,28 @@ def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_
         env = GrayEnvironment(env)
     return env
             
-def main(agent_class, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
+def main(agent_class, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda", GRAY_SCALE=False, LR=1e-4, EPISODES=1000):
     # make env
-    env = make_env(max_episodes=3000, gray_scale=True, resize=(128, 128))
+    env = make_env(max_episodes=2500, gray_scale=GRAY_SCALE, resize=(128, 128))
     obs, info = env.reset()
-
+    obs_shape = (1, obs.shape[0], obs.shape[1]) if GRAY_SCALE else obs.shape
     # make agent
-    agent = agent_class((1, obs.shape[0], obs.shape[1]))
+    agent = agent_class(obs_shape, lr=LR)
     agent.train()
     if checkpoint is not None:
         agent.load(checkpoint)
 
     # init logger and reward tracker
     logger = DQNLogger(f"{dir}/{agent.name}/stats.json")
-    rewardTracker = RewardTracker()
+    rewardTracker = REWARD_CLASS()
 
-    for episode in range(2000):
+    for episode in range(EPISODES):
         # reset env
         obs, info = env.reset()
-        obs = obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+        if GRAY_SCALE:
+            obs = obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+        else:
+            obs = obs[np.newaxis, :, :].to(DEVICE)
 
         # reset rewards
         rewardTracker.reset()
@@ -54,7 +57,11 @@ def main(agent_class, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda"):
             action, action_num = agent.act(obs)
             next_obs, _, terminated, truncated, next_info  = env.step(action[0])
             done = terminated or truncated
-            next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+
+            if GRAY_SCALE:
+                next_obs = next_obs[np.newaxis, np.newaxis, :, :].to(DEVICE)
+            else:
+                next_obs = next_obs[np.newaxis, :, :].to(DEVICE)
 
             # Calcluate rewward and store experience
             reward = rewardTracker.calculate_reward(info, next_info, truncated, terminated, action[0])
@@ -94,6 +101,10 @@ if __name__ == "__main__":
     parser.add_argument("--agent", type=str, choices=["DQN", "PRDQN", "DuelingPRDQN", "NstepDuelingPRDQN"], default="NstepDuelingPRDQN", help="Select the DQN variant")
     parser.add_argument("--dir", type=str, default="./dqn_results", help="path to store results")
     parser.add_argument("--checkpoint", type=str, default=None, help="path to checkpoint")
+    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
+    parser.add_argument("--reward", type=str, choices=["SPARSE", "COMPLEX"], default="COMPLEX", help="Select the reward variant")
+    parser.add_argument('--grayscale', action='store_true', help="Convert environment to grayscale")
+    parser.add_argument('--episodes', type=int, default=1000, help="episodes to train for")
     args = parser.parse_args()
     
     agent_classes = {
@@ -102,6 +113,11 @@ if __name__ == "__main__":
         "DuelingPRDQN": DuelingPRDQN,
         "NstepDuelingPRDQN": NstepDuelingPRDQN,
     }
+
+    reward_classes = {
+        "SPARSE": SparseRewardTracker,
+        "COMPLEX": ComplexRewardTracker
+    }
     
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    main(agent_classes[args.agent], args.dir, args.checkpoint, DEVICE=DEVICE)
+    main(agent_classes[args.agent], reward_classes[args.reward], args.dir, args.checkpoint, DEVICE=DEVICE, GRAY_SCALE=args.grayscale, LR=args.lr, EPISODES=args.episodes)

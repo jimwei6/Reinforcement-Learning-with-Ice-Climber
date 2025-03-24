@@ -7,6 +7,9 @@ class Logger():
   def __init__(self):
       pass
 
+  def create_save_data(self):
+      pass
+
   def save(self):
       pass
   
@@ -89,8 +92,7 @@ class DQNLogger(Logger):
 class PGLogger(DQNLogger):
     def __init__(self, log_path):
         super().__init__(log_path)
-        self.epoch_loss = []
-        self.epoch_reward = []
+        self.ep_avg_probs = []
 
     def log_episode(self, loss, final_info, ending="truncated"):
         self.ep_rewards.append(self.curr_ep_reward)
@@ -100,7 +102,22 @@ class PGLogger(DQNLogger):
         self.ep_ending.append(ending)
         self.ep_final_info.append(final_info)
         self.ep_action_summary.append(self.curr_action_summary.tolist())
+        self.ep_avg_probs.append((self.ep_probs / self.curr_ep_length).tolist())
         self.reset_episode()
         self.save()    
 
+    def reset_episode(self):
+        super().reset_episode()
+        self.ep_probs = np.zeros(9)
+
+    def log_step(self, loss, reward, height, action, probs):
+        super().log_step(loss, reward, height, action)
+        self.ep_probs += probs
+
+    def create_save_data(self):
+        data = super().create_save_data()
+        data['ep_action_probs'] = self.ep_avg_probs
+        return data
+
+        
       

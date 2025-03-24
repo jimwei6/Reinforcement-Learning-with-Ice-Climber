@@ -49,12 +49,13 @@ class VPG(nn.Module):
     
     def act(self, obs):
         obs = obs.to(device=self.device) # (1, C, H, W)
-        action_dist = Categorical(self.policy(obs))
+        probs = self.policy(obs)
+        action_dist = Categorical(probs)
         action_num = action_dist.sample()
         log_prob_action = action_dist.log_prob(action_num)
         entropy = action_dist.entropy()
         actions = self.convert_nums_to_actions([action_num.item()])
-        return actions, log_prob_action, entropy, None
+        return actions, log_prob_action, entropy, None, probs.clone().detach().cpu().numpy()
 
     def convert_nums_to_actions(self, nums):
         res = []
@@ -74,6 +75,8 @@ class VPG(nn.Module):
             discounted_returns.insert(0, tot_return)
         discounted_returns = torch.tensor(discounted_returns, device=self.device, dtype=torch.float32)
         discounted_returns = (discounted_returns - discounted_returns.mean()) / (discounted_returns.std() + 1e-8)            
+        episode_length = len(rewards)
+        discounted_returns = discounted_returns / episode_length
         return discounted_returns
     
     def policy_loss(self, log_prob_actions, weights, entropies):
@@ -192,7 +195,7 @@ class AdvantageActorCritic(VPG):
         log_prob_action = action_dist.log_prob(action_num)
         entropy = action_dist.entropy()
         actions = self.convert_nums_to_actions([action_num.item()])
-        return actions, log_prob_action, entropy, value.flatten()
+        return actions, log_prob_action, entropy, value.flatten(), action_probs.clone().detach().cpu().numpy()
     
     def optimize(self, log_prob_actions, episode_rewards, entropies, values):
         self.optimizer.zero_grad()
