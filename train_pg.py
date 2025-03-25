@@ -1,6 +1,6 @@
 # Referenced implementations from stable-retro, pytorch mario tutorial
 import retro
-from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopResetEnv, FrameStackMod
+from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopResetEnv, FrameStackMod, CustomRewardWrapper
 from gymnasium.wrappers.time_limit import TimeLimit
 
 from PG import VPG, AdvantageActorCritic
@@ -10,26 +10,27 @@ import numpy as np
 import argparse
 import torch
 
-def make_env(max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_scale=False, resize=None, skip_frames=4):
+def make_env(rewardTracker, max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_scale=False, resize=None, skip_frames=4):
     env = retro.make('IceClimber-Nes', retro.State.DEFAULT, use_restricted_actions=restricted_actions, players=1)
-    env = FrameSkip(env, skip_frames=skip_frames) # 4 steps per action
     env = NormalizeObservation(env, shape=resize)
-    env = NoopResetEnv(env)
     if max_episodes is not None: # add max episode length
-        env = TimeLimit(env, max_episode_steps=max_episodes)
+        env = TimeLimit(env, max_episode_steps=max_episodes * skip_frames)
     if gray_scale:
         env = GrayEnvironment(env)
-    
     env = FrameStackMod(env, 4) # stack frames for temporal information
+    env = CustomRewardWrapper(env, rewardTracker)
+    env = FrameSkip(env, skip_frames=skip_frames) # 4 steps per action
     return env
             
-def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda", GRAY_SCALE=False, LR=1e-4, EPISODES=1000):
+def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda", GRAY_SCALE=False, LR=1e-4, EPISODES=1000, scheduler=False):
+    rewardTracker = REWARD_CLASS()    
     # make environment
-    env = make_env(max_episodes=2500, gray_scale=GRAY_SCALE, resize=(128, 128))
+
+    env = make_env(rewardTracker, max_episodes=2500, gray_scale=GRAY_SCALE, resize=(128, 128))
     obs, info = env.reset()
 
     # make agent
-    agent = AGENT_CLASS(obs.shape, lr=LR)
+    agent = AGENT_CLASS(obs.shape, lr=LR, lr_scheduler=scheduler)
     agent.train()
     # load saved agent if checkpoint provided
     if checkpoint is not None:
@@ -37,7 +38,6 @@ def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE
 
     # init logger and reward tracker
     logger = PGLogger(f"{dir}/{agent.name}/stats.json")
-    rewardTracker = REWARD_CLASS()    
 
     for episode in range(EPISODES):
         # reset env
@@ -56,12 +56,10 @@ def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE
         while True:
             # get action and perform
             action, log_prob_action, entropy, value_pred, probs = agent.act(obs)
-            next_obs, _, terminated, truncated, next_info  = env.step(action[0])
+            next_obs, reward, terminated, truncated, next_info  = env.step(action[0], info)
             done = terminated or truncated
-      
-            # Calcluate rewward and store experience
-            reward = rewardTracker.calculate_reward(info, next_info, truncated, terminated, action[0])
-          
+            info = next_info  
+
             # append trajectory
             log_prob_actions.append(log_prob_action)
             ep_rewards.append(reward)
@@ -74,7 +72,6 @@ def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE
             # update obs and info
             next_obs = next_obs.unsqueeze(0).to(DEVICE)
             obs = next_obs
-            info = next_info  
             
             # log step
             logger.log_step(None, reward, next_info['height'], action[0], probs[0])
@@ -107,6 +104,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, default=None, help="path to checkpoint")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument('--grayscale', action='store_true', help="Convert environment to grayscale")
+    parser.add_argument('--scheduler', action='store_true', help="Use lr step scheduler")
     parser.add_argument('--episodes', type=int, default=1000, help="episodes to train for")
     args = parser.parse_args()
     

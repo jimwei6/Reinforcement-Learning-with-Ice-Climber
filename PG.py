@@ -14,12 +14,14 @@ class VPG(nn.Module):
                  output_dim=9,
                  lr = 1e-5,
                  name="VPG",
-                 gamma=0.99,
-                 beta=0.05):
+                 gamma=0.90,
+                 beta=0.05,
+                 lr_scheduler=False):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.policy = self.create_net(input_shape, output_dim).to(device=self.device)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, amsgrad=True)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, 50, gamma=0.5) if lr_scheduler else None
         self.output_dim = output_dim
         self.name = name
         self.lr = lr
@@ -90,6 +92,8 @@ class VPG(nn.Module):
         policy_loss = self.policy_loss(log_prob_actions, returns, entropies)
         policy_loss.backward()
         self.optimizer.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
         return policy_loss.item()
               
     def save(self, path, episode):
@@ -107,7 +111,8 @@ class VPG(nn.Module):
               'episode': episode,
               'lr': self.lr,
               'gamma': self.gamma,
-              'beta': self.beta
+              'beta': self.beta,
+              'scheduler': self.scheduler.state_dict() if self.scheduler is not None else False
         }
 
     def load(self, path):
@@ -126,6 +131,8 @@ class VPG(nn.Module):
         self.lr = checkpoint['lr']
         self.gamma = checkpoint['gamma']
         self.beta = checkpoint['beta']
+        if checkpoint['scheduler'] and self.scheduler is not None:
+            self.scheduler.load_state_dict(checkpoint['scheduler'])
 
 class ActorCritic(nn.Module):
     def __init__(self, input_shape, output_dim):
@@ -136,27 +143,34 @@ class ActorCritic(nn.Module):
     def create_value_net(self, input_shape):
         c, h, w = input_shape
         return nn.Sequential(
-            nn.Conv2d(in_channels=c, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=c, out_channels=16, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(32 * h * w, 1),
+            nn.Linear(8 * 16 * 16, 1), 
+            nn.Softmax(dim=-1)
         )
     
     def create_policy_net(self, input_shape, output_dim):
         c, h, w = input_shape
         return nn.Sequential(
-            nn.Conv2d(in_channels=c, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=c, out_channels=16, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
-            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(32 * h * w, output_dim),
+            nn.Linear(8 * 16 * 16, output_dim), 
             nn.Softmax(dim=-1)
         )
     
@@ -172,14 +186,16 @@ class AdvantageActorCritic(VPG):
                  output_dim=9,
                  lr = 1e-5,
                  name="AAC",
-                 gamma=0.99,
-                 beta=0.05):
+                 gamma=0.90,
+                 beta=0.05,
+                 lr_scheduler=False):
         super().__init__(input_shape,
                  output_dim=output_dim,
                  lr = lr,
                  name=name,
                  gamma=gamma,
-                 beta=beta)
+                 beta=beta,
+                 lr_scheduler=lr_scheduler)
 
     def create_net(self, input_shape, output_dim):
         return ActorCritic(input_shape, output_dim)
@@ -206,5 +222,7 @@ class AdvantageActorCritic(VPG):
         loss = policy_loss + 0.5 * value_loss
         loss.backward()
         self.optimizer.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
         return loss.item()
     

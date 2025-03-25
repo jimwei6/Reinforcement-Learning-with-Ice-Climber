@@ -43,13 +43,13 @@ class SparseRewardTracker():
         new_delta['jump_net_height'] = 0
         if len(info) > 0:
             # track number of jumps
-            if not self.jump and action[-3] == 1 and info['in_air'] == 0: # if jump is started on the ground
+            if not self.jump and action[-3] == 1: # if jump is started on the ground
                 self.total_jumps += 1
                 self.jump = True
                 self.jump_start_height = info['height']
                 self.height_jumps[info['height']] += 1
 
-            if self.jump and next_info['in_air'] == 1: # landed
+            if self.jump and next_info['in_air'] == 0: # landed
                 self.jump = False
                 new_delta['landed'] = True
                 new_delta['jump_net_height'] = next_info['height'] - self.jump_start_height
@@ -58,29 +58,34 @@ class SparseRewardTracker():
 
     def calculate_reward(self, info, next_info, truncated, terminated, action):      
         delta = self.calculate_info_delta(info, next_info)
-        curr_ep_length = self.curr_ep_length
-        curr_ep_max_height = self.curr_ep_max_height
         delta = self.update(info, next_info, truncated, terminated, action, delta)  
 
-        landing_reward = 0
-        death_penalty = 0
-        falling_penalty = 0
+        landing_reward = 0 # signal for landing on jumps
+        alive_reward = 0 # signal for living / dying
+        height_reward = 0 # signal for changing height
+        hammer_punish = 0 # punish signal for hammer
+
+        if action[0] == 1:
+            hammer_punish = -0.1
+
         # simply penalize dying
         if delta['lives'] < 0: 
-            death_penalty = -1    
+            alive_reward = -5    
         else:
-            # landed after jumping
+            alive_reward = 0.0001 # tiny reward for staying alive (staying alive for the whole episode would mean 0.25 reward in total)
             if delta['landed']: 
                 if delta['jump_net_height'] > 0: # reward effective jumps
-                    landing_reward = 1
+                    landing_reward = 5
                 elif delta['jump_net_height'] <= 0: # punish ineffective jumps
-                    landing_reward = -0.5
-            elif delta['height'] <= 0:
-                falling_penalty = -0.5
-
-        rew = landing_reward + death_penalty + falling_penalty
-        return max(min(rew, 1), -1) # clip bewtween 1 and -1
-
+                    landing_reward = -1
+            
+            if delta['height'] < 0: # punish falling
+                height_reward = -0.05
+            elif delta['height'] > 0: # reward attempt to move up
+                height_reward = 0.1
+                        
+        rew = landing_reward + height_reward + alive_reward + hammer_punish
+        return max(min(rew, 5), -5) # clip bewtween 1 and -1
 
 class ComplexRewardTracker(SparseRewardTracker):
   def __init__(self):
@@ -97,7 +102,7 @@ class ComplexRewardTracker(SparseRewardTracker):
           if next_info['lives'] < 0 or delta['lives'] < 0:
               # penalize death more if it is at lower height
               return -10 - max(10 - next_info['height'], 0)
-          elif next_info['height'] >= 10:
+          elif next_info['complete'] >= 10:
               # penalize excess jumps (average jumps per level - 10)
               penalize_jumps = min((self.total_jumps / 10) - 10, 5)
               # penalize excess hits 
@@ -126,7 +131,7 @@ class ComplexRewardTracker(SparseRewardTracker):
                   rew += 8
               elif delta['jump_net_height'] < 0: # negative jump
                   rew += -5
-              else:
+              else:                             # neutral jump (stay at same level)
                   rew += -1
 
           # Punish for using the hammer

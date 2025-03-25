@@ -13,21 +13,29 @@ class FrameStackMod(FrameStack):
         lazyframes = super().observation(observation)
         return torch.tensor(lazyframes.__array__())
 
+class CustomRewardWrapper(gym.Wrapper):
+    def __init__(self, env, reward_tracker):
+        super().__init__(env)
+        self.reward_tracker = reward_tracker
+
+    def step(self, action, info):
+        ob, _, terminated, truncated, next_info = self.env.step(action)
+        reward = self.reward_tracker.calculate_reward(info, next_info, truncated, terminated, action)
+        return ob, reward, terminated, truncated, next_info
+
 # Basic frame skip - apply same action per n amount of frames
 class FrameSkip(gym.Wrapper):
     def __init__(self, env, skip_frames=1):
         super().__init__(env)
         self.skip_frames = skip_frames
 
-    def step(self, action):
-        terminated = False
-        truncated = False
+    def step(self, action, info):
         total_rewards = 0
         for i in range(self.skip_frames):
-            ob, reward, terminated, truncated, info = self.env.step(action)
-
+            ob, reward, terminated, truncated, next_info = self.env.step(action, info)
             total_rewards += reward
-            if terminated or truncated:
+            info = next_info
+            if terminated or truncated or next_info['lives'] < 3:
                 break
         return ob, total_rewards, terminated, truncated, info
   
@@ -56,7 +64,7 @@ class NormalizeObservation(gym.ObservationWrapper):
 
 # run random actions when an environment is reset (helps with random initialization) references pytorch & stablebaselines
 class NoopResetEnv(gym.Wrapper):
-    def __init__(self, env, noop_max=100):
+    def __init__(self, env, noop_max=50):
         super().__init__(env)
         self.noop_max = noop_max
 
