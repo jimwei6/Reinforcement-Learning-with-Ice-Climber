@@ -1,59 +1,95 @@
 import numpy as np
 
-class RewardTracker():
+class SparseRewardTracker():
+    def __init__(self):
+        self.reset()
+
+    def calculate_info_delta(self, info, next_info):
+        if info is None or len(info) == 0: # initial step 
+            next_info['height'] -= 1
+            return next_info
+        delta = {}
+        for k, v in info.items():
+            delta[k] = next_info[k] - info[k]
+        return delta
+
+    def reset(self):
+        self.curr_ep_length = 0
+        self.curr_ep_max_height = 1
+        self.jump = False
+        self.total_jumps = 0
+        self.total_hits = 0
+        self.height_bricks_hit = {}
+        self.height_jumps = {}
+        self.height_hammer_hits = {}
+        for i in range(20):
+            self.height_bricks_hit[i] = 0
+            self.height_jumps[i] = 0
+            self.height_hammer_hits[i] = 0
+
+    def update(self, info, next_info, truncated, terminated, action, delta):
+        new_delta = delta.copy()
+        self.curr_ep_length += 1
+        self.curr_ep_max_height = max(self.curr_ep_max_height, next_info['height'])
+        self.in_air = next_info['in_air']
+
+        new_delta['hammer_hit'] = False
+        # track number of hits regardless if it was viable or not. Holding spams so keep increasing hits
+        if action[0] == 1:
+            self.total_hits += 1
+            new_delta['hammer_hit'] = True
+
+        new_delta['landed'] = False
+        new_delta['jump_net_height'] = 0
+        if len(info) > 0:
+            # track number of jumps
+            if not self.jump and action[-3] == 1: # if jump is started on the ground
+                self.total_jumps += 1
+                self.jump = True
+                self.jump_start_height = info['height']
+                self.height_jumps[info['height']] += 1
+
+            if self.jump and next_info['in_air'] == 0: # landed
+                self.jump = False
+                new_delta['landed'] = True
+                new_delta['jump_net_height'] = next_info['height'] - self.jump_start_height
+                self.jump_start_height = 0
+        return new_delta
+
+    def calculate_reward(self, info, next_info, truncated, terminated, action):      
+        delta = self.calculate_info_delta(info, next_info)
+        delta = self.update(info, next_info, truncated, terminated, action, delta)  
+
+        landing_reward = 0 # signal for landing on jumps
+        alive_reward = 0 # signal for living / dying
+        height_reward = 0 # signal for changing height
+        hammer_punish = 0 # punish signal for hammer
+
+        if action[0] == 1:
+            hammer_punish = -0.1
+
+        # simply penalize dying
+        if delta['lives'] < 0: 
+            alive_reward = -5    
+        else:
+            alive_reward = 0.0001 # tiny reward for staying alive (staying alive for the whole episode would mean 0.25 reward in total)
+            if delta['landed']: 
+                if delta['jump_net_height'] > 0: # reward effective jumps
+                    landing_reward = 5
+                elif delta['jump_net_height'] <= 0: # punish ineffective jumps
+                    landing_reward = -1
+            
+            if delta['height'] < 0: # punish falling
+                height_reward = -0.05
+            elif delta['height'] > 0: # reward attempt to move up
+                height_reward = 0.1
+                        
+        rew = landing_reward + height_reward + alive_reward + hammer_punish
+        return max(min(rew, 5), -5) # clip bewtween 1 and -1
+
+class ComplexRewardTracker(SparseRewardTracker):
   def __init__(self):
-      self.reset()
-      
-  def calculate_info_delta(self, info, next_info):
-      if info is None or len(info) == 0: # initial step 
-          next_info['height'] -= 1
-          return next_info
-      delta = {}
-      for k, v in info.items():
-          delta[k] = next_info[k] - info[k]
-      return delta
-
-  def reset(self):
-      self.curr_ep_length = 0
-      self.curr_ep_max_height = 1
-      self.jump = False
-      self.total_jumps = 0
-      self.total_hits = 0
-      self.height_bricks_hit = {}
-      self.height_jumps = {}
-      self.height_hammer_hits = {}
-      for i in range(20):
-          self.height_bricks_hit[i] = 0
-          self.height_jumps[i] = 0
-          self.height_hammer_hits[i] = 0
-
-  def update(self, info, next_info, truncated, terminated, action, delta):
-      self.curr_ep_length += 1
-      self.curr_ep_max_height = max(self.curr_ep_max_height, next_info['height'])
-      self.in_air = next_info['in_air']
-
-      delta['hammer_hit'] = False
-      # track number of hits regardless if it was viable or not. Holding spams so keep increasing hits
-      if action[0] == 1:
-          self.total_hits += 1
-          delta['hammer_hit'] = True
-
-      delta['landed'] = False
-      delta['jump_net_height'] = 0
-      if len(info) > 0:
-          # track number of jumps
-          if not self.jump and action[-3] == 1 and info['in_air'] == 0: # if jump is started on the ground
-              self.total_jumps += 1
-              self.jump = True
-              self.jump_start_height = info['height']
-              self.height_jumps[info['height']] += 1
-
-          if self.jump and next_info['in_air'] == 1: # landed
-              self.jump = False
-              delta['landed'] = True
-              delta['jump_net_height'] = next_info['height'] - self.jump_start_height
-              self.jump_start_height = 0
-      return delta
+      super().__init__()
 
   def calculate_reward(self, info, next_info, truncated, terminated, action):      
       delta = self.calculate_info_delta(info, next_info)
@@ -65,15 +101,13 @@ class RewardTracker():
       if terminated or delta['lives'] < 0: 
           if next_info['lives'] < 0 or delta['lives'] < 0:
               # penalize death more if it is at lower height
-              return -100 - 10 * min(10 - next_info['height'], 0)
-          elif next_info['height'] >= 10:
+              return -10 - max(10 - next_info['height'], 0)
+          elif next_info['complete'] >= 10:
               # penalize excess jumps (average jumps per level - 10)
-              penalize_jumps = min((self.total_jumps / 10) - 10, 50)
+              penalize_jumps = min((self.total_jumps / 10) - 10, 5)
               # penalize excess hits 
-              penalize_hits = min((self.total_hits / 10) - 10, 50)
-              # penalize deaths
-              penalize_deaths = 25 * (3 - next_info['lives'])
-              return min(100, 300 - penalize_deaths - penalize_jumps - penalize_hits) 
+              penalize_hits = min((self.total_hits / 10) - 10, 5)
+              return max(10, 20 - penalize_jumps - penalize_hits) 
       else:
           rew = 0
           height = info['height'] if len(info) > 1 else 1
@@ -97,12 +131,12 @@ class RewardTracker():
                   rew += 8
               elif delta['jump_net_height'] < 0: # negative jump
                   rew += -5
-              else:
+              else:                             # neutral jump (stay at same level)
                   rew += -1
 
           # Punish for using the hammer
           if delta['hammer_hit']: 
-              rew += -2 + 2 * np.exp(-self.height_hammer_hits[height]/50)
+              rew += -5 + 2 * np.exp(-self.height_hammer_hits[height]/50)
 
           if delta['height'] > 0: # jumped or moved up (in the air)
               if next_info['height'] <= curr_ep_max_height: # decay based on number of jumps in the level to prevent repeat jumping
@@ -113,7 +147,7 @@ class RewardTracker():
               rew += -5
           else: # no change in height
               if next_info['height'] == curr_ep_max_height: # encourages change in height but not too much to allow horizontal movements
-                  rew += -0.5
+                  rew += -5
               else: # character is below max height encourage getting back
-                  rew += -1
-          return max(-10, min(10, rew)) # keep rewards between [-10, 10]
+                  rew += -5
+          return max(-10, min(10, rew)) / 10 # keep rewards between [-1, 1]

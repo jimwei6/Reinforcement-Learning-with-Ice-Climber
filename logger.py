@@ -7,6 +7,9 @@ class Logger():
   def __init__(self):
       pass
 
+  def create_save_data(self):
+      pass
+
   def save(self):
       pass
   
@@ -61,7 +64,7 @@ class DQNLogger(Logger):
   def log_episode(self, final_info, ending="truncated"):
       self.ep_rewards.append(self.curr_ep_reward)
       self.ep_length.append(self.curr_ep_length)
-      self.mean_ep_loss.append(np.mean(self.curr_ep_loss))
+      self.mean_ep_loss.append(np.mean(self.curr_ep_loss) if len(self.curr_ep_loss) else None)
       self.ep_max_height.append(self.curr_ep_max_height)
       self.ep_ending.append(ending)
       self.ep_final_info.append(final_info)
@@ -84,4 +87,37 @@ class DQNLogger(Logger):
       self.curr_ep_loss = []
       self.curr_ep_max_height = 1
       self.curr_action_summary = np.array([0] * 4)
+
+# Epoch based compared to DQN (episode based)
+class PGLogger(DQNLogger):
+    def __init__(self, log_path):
+        super().__init__(log_path)
+        self.ep_avg_probs = []
+
+    def log_episode(self, loss, final_info, ending="truncated"):
+        self.ep_rewards.append(self.curr_ep_reward)
+        self.ep_length.append(self.curr_ep_length)
+        self.mean_ep_loss.append(loss)
+        self.ep_max_height.append(self.curr_ep_max_height)
+        self.ep_ending.append(ending)
+        self.ep_final_info.append(final_info)
+        self.ep_action_summary.append(self.curr_action_summary.tolist())
+        self.ep_avg_probs.append((self.ep_probs / self.curr_ep_length).tolist())
+        self.reset_episode()
+        self.save()    
+
+    def reset_episode(self):
+        super().reset_episode()
+        self.ep_probs = np.zeros(9)
+
+    def log_step(self, loss, reward, height, action, probs):
+        super().log_step(loss, reward, height, action)
+        self.ep_probs += probs
+
+    def create_save_data(self):
+        data = super().create_save_data()
+        data['ep_action_probs'] = self.ep_avg_probs
+        return data
+
+        
       

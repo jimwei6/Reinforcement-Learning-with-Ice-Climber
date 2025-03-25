@@ -14,6 +14,18 @@ Test the environment using example.py. This will load a window of Ice Climber wh
 python ./example.py
 ```
 
+Run training scripts:
+
+```
+python ./train_pg.py --agent {policy gradient name} --dir {dir}
+```
+
+```
+python ./train_dqn.py --agent {dqn name} --dir {dir}
+```
+
+Read the training scripts for more description of possible arguments.
+
 ## References
 
 - Retro (https://github.com/openai/retro)
