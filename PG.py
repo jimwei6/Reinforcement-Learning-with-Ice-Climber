@@ -14,8 +14,8 @@ class VPG(nn.Module):
                  output_dim=9,
                  lr = 1e-5,
                  name="VPG",
-                 gamma=0.90,
-                 beta=0.05,
+                 gamma=0.99,
+                 beta=0.01,
                  lr_scheduler=False):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -53,7 +53,7 @@ class VPG(nn.Module):
         )
     
     def act(self, obs):
-        obs = obs.to(device=self.device) # (1, C, H, W)
+        obs = obs # (1, C, H, W)
         probs = self.policy(obs)
         action_dist = Categorical(probs)
         action_num = action_dist.sample()
@@ -79,22 +79,27 @@ class VPG(nn.Module):
             tot_return = rew + self.gamma * tot_return
             discounted_returns.insert(0, tot_return)
         discounted_returns = torch.tensor(discounted_returns, device=self.device, dtype=torch.float32)
-        discounted_returns = (discounted_returns - discounted_returns.mean()) / (discounted_returns.std() + 1e-8)            
         return discounted_returns
     
     def policy_loss(self, log_prob_actions, weights, entropies):
-        loss = -(log_prob_actions * weights).sum() - entropies.sum() * self.beta
+        loss = -(log_prob_actions * weights).sum() - entropies.mean() * self.beta
         return loss
     
-    def optimize(self, log_prob_actions, episode_rewards, entropies, values=None):
-        self.optimizer.zero_grad()
-        returns = self.compute_returns(episode_rewards)
-        policy_loss = self.policy_loss(log_prob_actions, returns, entropies)
+    def optimize(self, log_prob_actions, episode_rewards, entropies, values=None, zero_grad=True, batch_size=1, optimizer_step=True):
+        if zero_grad:
+            self.optimizer.zero_grad()
+
+        returns = self.compute_returns(episode_rewards).detach()
+        policy_loss = self.policy_loss(log_prob_actions, returns, entropies) / batch_size
         policy_loss.backward()
+        if optimizer_step:
+            self.optimize_step()
+        return policy_loss.item()
+
+    def optimize_step(self):
         self.optimizer.step()
         if self.scheduler is not None:
             self.scheduler.step()
-        return policy_loss.item()
               
     def save(self, path, episode):
         log_dir = os.path.dirname(path)
@@ -186,8 +191,8 @@ class AdvantageActorCritic(VPG):
                  output_dim=9,
                  lr = 1e-5,
                  name="AAC",
-                 gamma=0.90,
-                 beta=0.05,
+                 gamma=0.99,
+                 beta=0.01,
                  lr_scheduler=False):
         super().__init__(input_shape,
                  output_dim=output_dim,
@@ -214,15 +219,40 @@ class AdvantageActorCritic(VPG):
         actions = self.convert_nums_to_actions([action_num.item()])
         return actions, log_prob_action, entropy, value.flatten(), action_probs.clone().detach().cpu().numpy()
     
-    def optimize(self, log_prob_actions, episode_rewards, entropies, values):
-        self.optimizer.zero_grad()
+    def optimize(self, log_prob_actions, episode_rewards, entropies, values, zero_grad=True, batch_size=1, optimizer_step=True):
+        if zero_grad:
+            self.optimizer.zero_grad()
+
         returns = self.compute_returns(episode_rewards)
         policy_loss = self.policy_loss(log_prob_actions, returns, entropies)
         value_loss = self.value_loss(values, returns)
-        loss = policy_loss + 0.5 * value_loss
+        loss = (policy_loss + 0.5 * value_loss) / batch_size
         loss.backward()
-        self.optimizer.step()
-        if self.scheduler is not None:
-            self.scheduler.step()
-        return loss.item()
+        if optimizer_step:
+            self.optimize_step()
+        return loss.item()              
+    
+
+# Sanity Check
+class VPGCartPole(VPG):
+    def __init__(self, input_shape, output_dim=2, lr=0.01, name="VPG", gamma=0.99, beta=0.01, lr_scheduler=False):
+        super().__init__(input_shape, output_dim, lr, name, gamma, beta, lr_scheduler)
+        self.policy.train()
+
+    def create_net(self, input_shape, output_dim):
+        return nn.Sequential(
+            nn.Linear(4, 128),
+            nn.ReLU(),
+            nn.Linear(128, output_dim),
+            nn.Softmax(dim=-1)
+        )
+    
+    def act(self, obs):
+        obs = obs.to(device=self.device) # (1, C, H, W)
+        probs = self.policy(obs)
+        action_dist = Categorical(probs)
+        action_num = action_dist.sample()
+        log_prob_action = action_dist.log_prob(action_num)
+        entropy = action_dist.entropy()
+        return action_num.item(), log_prob_action, entropy, None, probs.clone().detach().cpu().numpy()
     
