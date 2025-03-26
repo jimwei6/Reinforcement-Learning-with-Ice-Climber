@@ -40,10 +40,7 @@ class DQNLogger(Logger):
 
       if not os.path.exists(self.log_path):
           with open(self.log_path, "w") as json_file:
-              json.dump({"ep_rewards": [], "mean_ep_loss": [],
-                          "ep_length": [], "ep_max_level": [],
-                          "ep_ending": [], "ep_final_info": [],
-                          "ep_action_summary": []}, json_file, indent=4)
+              json.dump(self.create_save_data(), json_file, indent=4)
 
   def create_save_data(self):
       return {
@@ -91,20 +88,46 @@ class DQNLogger(Logger):
 # Epoch based compared to DQN (episode based)
 class PGLogger(DQNLogger):
     def __init__(self, log_path):
+        self.ep_avg_probs = []
+        self.batch_avg_probs = []
+        self.batch_rewards = []
+        self.mean_batch_loss = []
+        self.batch_length = []
+        self.batch_max_height = []
+        self.batch_min_height = []
+        self.batch_ending = []
+        self.batch_action_summary = []
         super().__init__(log_path)
+
+
+    def log_batch(self, loss):
+        self.batch_rewards.append(np.mean(self.ep_rewards).item())
+        self.batch_length.append(np.mean(self.ep_length).item())
+        self.mean_batch_loss.append(loss)
+        self.batch_max_height.append(np.max(self.ep_max_height).item())
+        self.batch_min_height.append(np.min(self.ep_max_height).item())
+        self.batch_ending.append(self.ep_ending.copy())
+        self.batch_action_summary.append(np.mean(self.ep_action_summary, axis=0).tolist())
+        self.batch_avg_probs.append(np.mean(self.ep_avg_probs, axis=0).tolist())
+        self.save()
+        self.reset_batch()
+
+    def reset_batch(self):
+        self.ep_rewards = []
+        self.ep_length = []
+        self.ep_max_height = []
+        self.ep_ending = []
+        self.ep_action_summary = []
         self.ep_avg_probs = []
 
-    def log_episode(self, loss, final_info, ending="truncated"):
+    def log_episode(self, ending="truncated"):
         self.ep_rewards.append(self.curr_ep_reward)
         self.ep_length.append(self.curr_ep_length)
-        self.mean_ep_loss.append(loss)
         self.ep_max_height.append(self.curr_ep_max_height)
         self.ep_ending.append(ending)
-        self.ep_final_info.append(final_info)
         self.ep_action_summary.append(self.curr_action_summary.tolist())
         self.ep_avg_probs.append((self.ep_probs / self.curr_ep_length).tolist())
         self.reset_episode()
-        self.save()    
 
     def reset_episode(self):
         super().reset_episode()
@@ -115,8 +138,16 @@ class PGLogger(DQNLogger):
         self.ep_probs += probs
 
     def create_save_data(self):
-        data = super().create_save_data()
-        data['ep_action_probs'] = self.ep_avg_probs
+        data = {
+            "batch_mean_rewards": self.batch_rewards,
+            "batch_mean_loss": self.mean_batch_loss,
+            "batch_mean_length": self.batch_length,
+            "batch_max_level": self.batch_max_height,
+            "batch_min_max_level": self.batch_min_height,
+            "batch_ending": self.batch_ending,
+            "batch_mean_action_summary": self.batch_action_summary,
+            "batch_mean_action_probs": self.batch_avg_probs
+        }
         return data
 
         

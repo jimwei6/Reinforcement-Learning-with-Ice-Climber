@@ -22,7 +22,8 @@ def make_env(rewardTracker, max_episodes=None, restricted_actions=retro.Actions.
     env = FrameSkip(env, skip_frames=skip_frames) # 4 steps per action
     return env
             
-def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE="cuda", GRAY_SCALE=False, LR=1e-4, EPISODES=1000, scheduler=False):
+def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100,
+          DEVICE="cuda", GRAY_SCALE=False, LR=1e-4, EPISODES=1000, scheduler=False, TRAJ_BATCH_SIZE=8):
     rewardTracker = REWARD_CLASS()    
     # make environment
 
@@ -40,60 +41,68 @@ def main(AGENT_CLASS, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE
     logger = PGLogger(f"{dir}/{agent.name}/stats.json")
 
     for episode in range(EPISODES):
-        # reset env
-        obs, info = env.reset()
-        obs = obs.unsqueeze(0).to(DEVICE)
-        # reset rewards
-        rewardTracker.reset()
+        batch_loss = 0
+        for batch in range(TRAJ_BATCH_SIZE):
+            # reset env
+            obs, info = env.reset()
+            obs = obs.unsqueeze(0).to(DEVICE)
+            # reset rewards
+            rewardTracker.reset()
 
-        # reset episode variables
-        ending = ""
-        log_prob_actions = []
-        ep_rewards = []
-        entropies = []
-        value_preds = []
+            # reset episode variables
+            ending = ""
+            log_prob_actions = []
+            ep_rewards = []
+            entropies = []
+            value_preds = []
+            
+            while True:
+                # get action and perform
+                action, log_prob_action, entropy, value_pred, probs = agent.act(obs)
+                next_obs, reward, terminated, truncated, next_info  = env.step(action[0], info)
+                done = terminated or truncated
+                info = next_info  
+
+                # append trajectory
+                log_prob_actions.append(log_prob_action)
+                ep_rewards.append(reward)
+                entropies.append(entropy)
+
+                # For Actor critic methods
+                if value_pred is not None:
+                  value_preds.append(value_pred)
         
-        while True:
-            # get action and perform
-            action, log_prob_action, entropy, value_pred, probs = agent.act(obs)
-            next_obs, reward, terminated, truncated, next_info  = env.step(action[0], info)
-            done = terminated or truncated
-            info = next_info  
-
-            # append trajectory
-            log_prob_actions.append(log_prob_action)
-            ep_rewards.append(reward)
-            entropies.append(entropy)
-
-            # For Actor critic methods
-            if value_pred is not None:
-              value_preds.append(value_pred)
-    
-            # update obs and info
-            next_obs = next_obs.unsqueeze(0).to(DEVICE)
-            obs = next_obs
-            
-            # log step
-            logger.log_step(None, reward, next_info['height'], action[0], probs[0])
-            
-            # Quit episode if game ended         
-            if done or next_info['lives'] < 3:
-                if truncated:
-                    ending = "truncated"
-                else:
-                    ending = "gameover" if next_info['lives'] < 3 else "succeed"
-                break
-
+                # update obs and info
+                next_obs = next_obs.unsqueeze(0).to(DEVICE)
+                obs = next_obs
+                
+                # log step
+                logger.log_step(None, reward, next_info['height'], action[0], probs[0])
+                
+                # Quit episode if game ended         
+                if done or next_info['lives'] < 3:
+                    if truncated:
+                        ending = "truncated"
+                    else:
+                        ending = "gameover" if next_info['lives'] < 3 else "succeed"
+                    break
+            # log episode
+            logger.log_episode(ending)
+            batch_loss += agent.optimize(torch.cat(log_prob_actions),
+                                        ep_rewards,
+                                        torch.cat(entropies),
+                                        torch.cat(value_preds) if len(value_preds) else None,
+                                        zero_grad=batch==0,
+                                        batch_size=TRAJ_BATCH_SIZE,
+                                        optimizer_step=False) # accumulate gradient across batch
+              
+        # optimize model on accumulated gradients
+        agent.optimize_step()
+        logger.log_batch(batch_loss)
+        torch.cuda.empty_cache()
         # Save model every N episodes
         if (episode + 1) % SAVE_EVERY == 0:
-            agent.save(f"{dir}/{agent.name}/checkpoints/ep_{episode + 1}.chkpt", episode + 1)
-        
-        # optimize model based on trajectory
-        loss = agent.optimize(torch.cat(log_prob_actions), ep_rewards, torch.cat(entropies), torch.cat(value_preds) if len(value_preds) else None)
-
-        # log episode
-        logger.log_episode(loss, info, ending)
-        torch.cuda.empty_cache()
+            agent.save(f"{dir}/{agent.name}/checkpoints/batch_{episode + 1}.chkpt", episode + 1)
     env.close()
 
 if __name__ == "__main__":

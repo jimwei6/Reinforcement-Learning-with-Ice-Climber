@@ -1,5 +1,6 @@
 import numpy as np
 
+# Sparse - only contain rewards related to dying, height change, and hammer hits
 class SparseRewardTracker():
     def __init__(self):
         self.reset()
@@ -66,27 +67,30 @@ class SparseRewardTracker():
         hammer_punish = 0 # punish signal for hammer
 
         if action[0] == 1:
-            hammer_punish = -0.1
+            hammer_punish = -0.25
 
-        # simply penalize dying
+        # simply penalize dying (more if on lower height)
         if delta['lives'] < 0: 
-            alive_reward = -5    
+            alive_reward = -50 * max(11 - self.curr_ep_max_height, 1)
         else:
-            alive_reward = 0.0001 # tiny reward for staying alive (staying alive for the whole episode would mean 0.25 reward in total)
             if delta['landed']: 
                 if delta['jump_net_height'] > 0: # reward effective jumps
-                    landing_reward = 5
+                    landing_reward = 25 * (next_info['height'] - 1)
                 elif delta['jump_net_height'] <= 0: # punish ineffective jumps
-                    landing_reward = -1
+                    landing_reward = -0.20
             
             if delta['height'] < 0: # punish falling
-                height_reward = -0.05
+                height_reward = -10
             elif delta['height'] > 0: # reward attempt to move up
-                height_reward = 0.1
+                height_reward = 1
+            else:
+                height_reward = -0.05
                         
         rew = landing_reward + height_reward + alive_reward + hammer_punish
-        return max(min(rew, 5), -5) # clip bewtween 1 and -1
+        return max(min(rew, 500), -500) # clip bewtween 1 and -1
 
+
+# Complex - give sub signals including monster kills, brick hits, excessive actions per level
 class ComplexRewardTracker(SparseRewardTracker):
   def __init__(self):
       super().__init__()
