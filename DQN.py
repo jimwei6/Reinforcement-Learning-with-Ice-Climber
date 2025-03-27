@@ -99,7 +99,7 @@ class DQN(nn.Module):
         return actions, action_num
     
     def update_exploration_rate(self):
-        self.exploration_rate = self.exploration_rate_max * np.exp(-self.steps/1000) # decay exploration rate slowly across ~ 5 episodes
+        self.exploration_rate = self.exploration_rate_max * np.exp(-1. * self.steps / self.exploration_rate_decay) # decay exploration rate slowly across ~ 5 episodes
         self.exploration_rate = max(self.exploration_rate_min, self.exploration_rate)
 
     def reset_episode(self, new_max_exploration_rate=None):
@@ -131,7 +131,8 @@ class DQN(nn.Module):
         with torch.no_grad():
             online_next_actions = torch.argmax(self.online_net(next_obs), axis=1)
             target_next_values = self.target_net(next_obs).gather(1, online_next_actions.unsqueeze(1))
-            td_target = reward + (1 - done) * self.gamma * target_next_values
+        
+        td_target = reward + (1 - done) * self.gamma * target_next_values
         loss = self.loss_fn(td_estimate, td_target)
 
         self.optimizer.zero_grad()
@@ -275,7 +276,7 @@ class PRDQN(DQN):
         with torch.no_grad():
             online_next_actions = torch.argmax(self.online_net(next_obs), axis=1)
             target_next_values = self.target_net(next_obs).gather(1, online_next_actions.unsqueeze(1))
-            td_target = reward + (1 - done) * self.gamma * target_next_values
+        td_target = reward + (1 - done) * self.gamma * target_next_values
         td_error = self.loss_fn(td_estimate, td_target).flatten()
         loss = (weights * td_error).mean()
         self.optimizer.zero_grad()
@@ -450,8 +451,7 @@ class NstepDuelingPRDQN(DuelingPRDQN):
         with torch.no_grad():
             online_n_step_next_actions = torch.argmax(self.online_net(n_step_next_obs), axis=1)
             target_n_step_next_values = self.target_net(n_step_next_obs).gather(1, online_n_step_next_actions.unsqueeze(1))
-            discount = self.gamma ** steps
-            td_target = reward + (1 - done) * discount * target_n_step_next_values
+        td_target = reward + (1 - done) * (self.gamma ** steps) * target_n_step_next_values
         td_error = self.loss_fn(td_estimate, td_target).flatten()
         loss = (weights * td_error).mean()
         self.optimizer.zero_grad()
@@ -468,3 +468,33 @@ class NstepDuelingPRDQN(DuelingPRDQN):
     def load_checkpoint(self, checkpoint):
         super().load_checkpoint(checkpoint)
         self.n_steps = checkpoint['n_steps']
+
+
+class DQN_CARTPOLE(DQN):
+    def __init__(self, input_shape, output_dim=2, eps_start=0.95, eps_end=0.05, eps_decay=0.99999975, batch_size=64, gamma=0.95, tau=0.005, lr=0.0001, start_learning=128, replay_size=512, loss_fn=nn.SmoothL1Loss, name="DQN", learn_per_n_steps=2):
+        super().__init__(input_shape, output_dim, eps_start, eps_end, eps_decay, batch_size, gamma, tau, lr, start_learning, replay_size, loss_fn, name, learn_per_n_steps)
+
+    def create_net(self, input_shape, output_dim):
+        return nn.Sequential(
+            nn.Linear(4, 128),
+            nn.ReLU(),
+            nn.Linear(128, output_dim),
+            nn.Softmax(dim=-1)
+        )
+    
+    def act(self, obs): 
+        # select based on epsilon greedy policy (trade off between exploitation and exploration)
+        if self.training and np.random.rand() < self.exploration_rate: # explore
+            action_num = np.random.randint(self.output_dim)
+            actions = [action_num]
+        else: # exploit
+            with torch.no_grad():
+                obs = obs.to(device=self.device) # (1, C, H, W)
+                action_values = self.online_net(obs)
+                action_num = torch.argmax(action_values, axis=1).item()
+                actions = [action_num]
+
+        if self.training:
+            self.update_exploration_rate()
+            self.steps += 1
+        return actions, action_num
