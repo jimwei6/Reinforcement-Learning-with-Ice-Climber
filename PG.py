@@ -48,7 +48,7 @@ class VPG(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(32 * 16 * 16, output_dim), 
+            nn.Linear(32 * 11 * 11, output_dim), 
             nn.Softmax(dim=-1)
         )
     
@@ -158,7 +158,7 @@ class ActorCritic(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(8 * 16 * 16, 1), 
+            nn.Linear(8 * 11 * 11, 1), 
             nn.Softmax(dim=-1)
         )
     
@@ -175,7 +175,7 @@ class ActorCritic(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(8 * 16 * 16, output_dim), 
+            nn.Linear(8 * 11 * 11, output_dim), 
             nn.Softmax(dim=-1)
         )
     

@@ -13,22 +13,24 @@ class DQN(nn.Module):
                  output_dim=9,
                  eps_start = 0.95,
                  eps_end = 0.05,
-                 eps_decay = 0.99999975,
+                 eps_decay = 1000,
                  batch_size = 64,
                  gamma = 0.95,
                  tau = 0.005,
                  lr = 1e-4,
                  start_learning=128,
                  replay_size=512,
-                 loss_fn=nn.SmoothL1Loss,
+                 loss_fn=nn.MSELoss,
                  name="DQN",
-                 learn_per_n_steps=2):
+                 learn_per_n_steps=1,
+                 buffer_device="cpu",
+                 device="cpu"):
         super().__init__()
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device
         self.online_net = self.create_net(input_shape, output_dim).to(device=self.device)
         self.target_net = self.create_net(input_shape, output_dim).to(device=self.device)
         self.target_net.load_state_dict(self.online_net.state_dict())
-        self.memory = self.create_memory_buffer(replay_size=replay_size, device=self.device)
+        self.memory = self.create_memory_buffer(replay_size=replay_size, device=buffer_device)
         self.replay_size = replay_size
         self.optimizer = torch.optim.AdamW(self.online_net.parameters(), lr=lr, amsgrad=True)
         self.output_dim = output_dim
@@ -46,6 +48,7 @@ class DQN(nn.Module):
         self.learn_per_n_steps = learn_per_n_steps
         self.lr = lr
         self.training = False
+        self.buffer_device = buffer_device
   
     def eval(self):
         self.training = False
@@ -69,18 +72,25 @@ class DQN(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(32 * 16 * 16, output_dim), 
+            nn.Linear(32 * 11 * 11, output_dim), 
             nn.Softmax(dim=-1)
         )
     
     def recall(self, batch_size):
         batch = self.memory.sample(batch_size)
         obs, next_obs, action, action_num, reward, done = (batch.get(key) for key in ("obs", "next_obs", "action", "action_num", "reward", "done"))
-        return obs.squeeze(1), next_obs.squeeze(1), action, action_num, reward, done
+        if self.buffer_device == self.device:
+            return obs.squeeze(1), next_obs.squeeze(1), action, action_num, reward, done
+        return obs.squeeze(1).to(self.device), next_obs.squeeze(1).to(self.device), action.to(self.device), action_num.to(self.device), reward.to(self.device), done.to(self.device)    
     
     def cache(self, obs, next_obs, action, action_num, reward, done):
-        self.memory.add(TensorDict({"obs": obs, "next_obs": next_obs, "action": action, "action_num": action_num, "reward": reward, "done": done}, batch_size=[]))
-    
+        if self.device != self.buffer_device:
+            self.memory.add(TensorDict({"obs": obs.to(self.buffer_device), "next_obs": next_obs.to(self.buffer_device),
+                                        "action": action.to(self.buffer_device), "action_num": action_num.to(self.buffer_device), 
+                                        "reward": reward.to(self.buffer_device), "done": done.to(self.buffer_device)}, batch_size=[]))
+        else:
+            self.memory.add(TensorDict({"obs": obs, "next_obs": next_obs, "action": action, "action_num": action_num, "reward": reward, "done": done}, batch_size=[]))
+
     def act(self, obs): 
         # select based on epsilon greedy policy (trade off between exploitation and exploration)
         if self.training and np.random.rand() < self.exploration_rate: # explore
@@ -220,16 +230,18 @@ class PRDQN(DQN):
                  output_dim=9,
                  eps_start = 0.9,
                  eps_end = 0.05,
-                 eps_decay = 0.99999975,
+                 eps_decay = 1000,
                  batch_size = 64,
                  gamma = 0.95,
                  tau = 0.005,
                  lr = 1e-4,
                  start_learning=128,
                  replay_size=512,
-                 loss_fn=nn.SmoothL1Loss,
+                 loss_fn=nn.MSELoss,
                  name="PRDQN",
-                 learn_per_n_steps=2):
+                 learn_per_n_steps=1,
+                 buffer_device="cpu",
+                 device="cpu"):
         super().__init__(input_shape,
                           output_dim,
                           eps_start = eps_start,
@@ -243,7 +255,9 @@ class PRDQN(DQN):
                           replay_size=replay_size,
                           loss_fn=loss_fn,
                           name=name,
-                          learn_per_n_steps=learn_per_n_steps)
+                          learn_per_n_steps=learn_per_n_steps,
+                          buffer_device=buffer_device,
+                          device=device)
         self.loss_fn = loss_fn(reduction="none")
     # Prioritized replay buffer
     def create_memory_buffer(self, replay_size, device):
@@ -256,20 +270,32 @@ class PRDQN(DQN):
             target_next_values = self.target_net(next_obs).gather(1, online_next_actions.unsqueeze(1))
             td_target = reward.unsqueeze(1) + (1 - done.unsqueeze(1)) * self.gamma * target_next_values
             td_error = self.loss_fn(td_estimate, td_target).item()
-        self.memory.add(TensorDict({
-            "obs": obs, 
-            "next_obs": next_obs, 
-            "action": action, 
-            "action_num": action_num, 
-            "reward": reward, 
-            "done": done,
-            "td_error": td_error}, batch_size=[]))
+        if self.buffer_device != self.device:
+            self.memory.add(TensorDict({
+                "obs": obs.to(self.buffer_device), 
+                "next_obs": next_obs.to(self.buffer_device), 
+                "action": action.to(self.buffer_device), 
+                "action_num": action_num.to(self.buffer_device), 
+                "reward": reward.to(self.buffer_device), 
+                "done": done.to(self.buffer_device),
+                "td_error": td_error}, batch_size=[]))
+        else:
+            self.memory.add(TensorDict({
+                "obs": obs, 
+                "next_obs": next_obs, 
+                "action": action, 
+                "action_num": action_num, 
+                "reward": reward, 
+                "done": done,
+                "td_error": td_error}, batch_size=[]))
 
     def recall(self, batch_size):
         batch = self.memory.sample(batch_size)
         obs, next_obs, action, action_num, reward, done, indices, weights = (batch.get(key) for key in ("obs", "next_obs", "action", "action_num", "reward", "done", "index", "_weight"))
-        return obs.squeeze(1), next_obs.squeeze(1), action, action_num, reward, done, indices, weights
-    
+        if self.buffer_device == self.device:
+            return obs.squeeze(1), next_obs.squeeze(1), action, action_num, reward, done, indices, weights
+        return obs.squeeze(1).to(self.device), next_obs.squeeze(1).to(self.device), action.to(self.device), action_num.to(self.device), reward.to(self.device), done.to(self.device), indices.to(self.device), weights.to(self.device)  
+        
     def update_online(self):
         obs, next_obs, action, action_num, reward, done, indices, weights = self.recall(self.batch_size)
         td_estimate = self.online_net(obs).gather(1, action_num)
@@ -304,7 +330,7 @@ class ValueAdvantageNet(nn.Module):
             nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Flatten(), 32 * 16 * 16
+            nn.Flatten(), 32 * 11 * 11
         )
 
     def create_value_net(self, conv_out_size):
@@ -330,16 +356,18 @@ class DuelingPRDQN(PRDQN):
                  output_dim=9,
                  eps_start = 0.9,
                  eps_end = 0.05,
-                 eps_decay = 0.99999975,
+                 eps_decay = 1000,
                  batch_size = 64,
                  gamma = 0.95,
                  tau = 0.005,
                  lr = 1e-4,
                  start_learning=128,
                  replay_size=512,
-                 loss_fn=nn.SmoothL1Loss,
+                 loss_fn=nn.MSELoss,
                  name="DuelingPRDQN",
-                 learn_per_n_steps=2):
+                 learn_per_n_steps=1,
+                 buffer_device="cpu",
+                 device="cpu"):
         super().__init__(input_shape,
                           output_dim,
                           eps_start = eps_start,
@@ -353,7 +381,9 @@ class DuelingPRDQN(PRDQN):
                           replay_size=replay_size,
                           loss_fn=loss_fn,
                           name=name,
-                          learn_per_n_steps=learn_per_n_steps)
+                          learn_per_n_steps=learn_per_n_steps,
+                          buffer_device=buffer_device,
+                          device=device)
     def create_net(self, input_shape, output_dim):
         return ValueAdvantageNet(input_shape, output_dim)
 
@@ -363,17 +393,19 @@ class NstepDuelingPRDQN(DuelingPRDQN):
                  output_dim=9,
                  eps_start = 0.9,
                  eps_end = 0.05,
-                 eps_decay = 0.99999975,
+                 eps_decay = 1000,
                  batch_size = 64,
                  gamma = 0.95,
                  tau = 0.005,
                  lr = 1e-4,
                  start_learning=128,
                  replay_size=512,
-                 loss_fn=nn.SmoothL1Loss,
+                 loss_fn=nn.MSELoss,
                  name="NstepDuelingPRDQN",
-                 learn_per_n_steps=2,
-                 n_steps=6):
+                 learn_per_n_steps=1,
+                 n_steps=6,
+                 buffer_device="cpu",
+                 device="cpu"):
         super().__init__(input_shape,
                           output_dim,
                           eps_start = eps_start,
@@ -387,7 +419,9 @@ class NstepDuelingPRDQN(DuelingPRDQN):
                           replay_size=replay_size,
                           loss_fn=loss_fn,
                           name=name,
-                          learn_per_n_steps=learn_per_n_steps)
+                          learn_per_n_steps=learn_per_n_steps,
+                          buffer_device=buffer_device,
+                          device=device)
         self.n_steps = n_steps
         self.n_step_buffer = deque()
 
@@ -428,21 +462,34 @@ class NstepDuelingPRDQN(DuelingPRDQN):
             td_error = self.loss_fn(td_estimate, td_target).item()  # Calculate the Temporal Difference (TD) error
   
         # Add the n-step transition to memory
-        self.memory.add(TensorDict({
-            "obs": init_step_obs,
-            "next_obs": n_step_next_obs,
-            "action": init_step_action,
-            "action_num": init_step_action_num,
-            "reward": n_step_reward,
-            "done": n_step_done,
-            "td_error": td_error, 
-            "step": torch.tensor([steps])}, batch_size=[]))
+        if self.device != self.buffer_device:
+            self.memory.add(TensorDict({
+                          "obs": init_step_obs.to(self.buffer_device),
+                          "next_obs": n_step_next_obs.to(self.buffer_device),
+                          "action": init_step_action.to(self.buffer_device),
+                          "action_num": init_step_action_num.to(self.buffer_device),
+                          "reward": n_step_reward.to(self.buffer_device),
+                          "done": n_step_done.to(self.buffer_device),
+                          "td_error": td_error.to(self.buffer_device), 
+                          "step": torch.tensor([steps]).to(self.buffer_device)}, batch_size=[]))
+        else:
+            self.memory.add(TensorDict({
+                "obs": init_step_obs,
+                "next_obs": n_step_next_obs,
+                "action": init_step_action,
+                "action_num": init_step_action_num,
+                "reward": n_step_reward,
+                "done": n_step_done,
+                "td_error": td_error, 
+                "step": torch.tensor([steps])}, batch_size=[]))
         
 
     def recall(self, batch_size):
         batch = self.memory.sample(batch_size)
         obs, next_obs, action, action_num, reward, done, indices, weights, steps = (batch.get(key) for key in ("obs", "next_obs", "action", "action_num", "reward", "done", "index", "_weight", "step"))
-        return obs.squeeze(1), next_obs.squeeze(1), action, action_num, reward, done, indices, weights, steps
+        if self.device == self.buffer_device:
+            return obs.squeeze(1), next_obs.squeeze(1), action, action_num, reward, done, indices, weights, steps
+        return obs.squeeze(1).to(self.device), next_obs.squeeze(1).to(self.device), action.to(self.device), action_num.to(self.device), reward.to(self.device), done.to(self.device), indices.to(self.device), weights.to(self.device), steps.to(self.device)
     
         
     def update_online(self):
@@ -471,8 +518,12 @@ class NstepDuelingPRDQN(DuelingPRDQN):
 
 
 class DQN_CARTPOLE(DQN):
-    def __init__(self, input_shape, output_dim=2, eps_start=0.95, eps_end=0.05, eps_decay=0.99999975, batch_size=64, gamma=0.95, tau=0.005, lr=0.0001, start_learning=128, replay_size=512, loss_fn=nn.SmoothL1Loss, name="DQN", learn_per_n_steps=2):
-        super().__init__(input_shape, output_dim, eps_start, eps_end, eps_decay, batch_size, gamma, tau, lr, start_learning, replay_size, loss_fn, name, learn_per_n_steps)
+    def __init__(self, input_shape, output_dim=2, eps_start=0.95, eps_end=0.05, eps_decay=1000, batch_size=64,
+                  gamma=0.95, tau=0.005, lr=0.0001, start_learning=128, replay_size=512, loss_fn=nn.MSELoss,
+                  name="DQN", learn_per_n_steps=1,
+                  device="cuda", buffer_device="cuda"):
+        super().__init__(input_shape, output_dim, eps_start, eps_end, eps_decay, batch_size, gamma, tau, lr, start_learning,
+                          replay_size, loss_fn, name, learn_per_n_steps, device=device, buffer_device=buffer_device)
 
     def create_net(self, input_shape, output_dim):
         return nn.Sequential(
