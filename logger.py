@@ -31,6 +31,7 @@ class DQNLogger(Logger):
       self.ep_ending = []
       self.ep_final_info = []
       self.ep_action_summary = []
+      self.ep_mean_exploration_rate = []
       self.reset_episode()
       self.log_path = log_path
       
@@ -50,7 +51,8 @@ class DQNLogger(Logger):
           "ep_max_level": self.ep_max_height,
           "ep_ending": self.ep_ending,
           "ep_final_info": self.ep_final_info,
-          "ep_action_summary": self.ep_action_summary
+          "ep_action_summary": self.ep_action_summary,
+          "ep_mean_exploration_rate": self.ep_mean_exploration_rate
       }
 
   def save(self):
@@ -66,10 +68,12 @@ class DQNLogger(Logger):
       self.ep_ending.append(ending)
       self.ep_final_info.append(final_info)
       self.ep_action_summary.append(self.curr_action_summary.tolist())
+      if len(self.curr_ep_exploration_rate):
+          self.ep_mean_exploration_rate.append(np.mean(self.curr_ep_exploration_rate))
       self.reset_episode()
       self.save()
      
-  def log_step(self, loss, reward, height, action):
+  def log_step(self, loss, reward, height, action, exploration_rate=None):
       if loss is not None:
           self.curr_ep_loss.append(loss)
       self.curr_ep_length += 1
@@ -77,6 +81,8 @@ class DQNLogger(Logger):
       self.curr_ep_max_height = max(self.curr_ep_max_height, height)
       self.curr_action_summary += np.array(action[-4:])
       self.curr_action_summary[0] += action[0]
+      if exploration_rate is not None:
+          self.curr_ep_exploration_rate.append(exploration_rate)
 
   def reset_episode(self):
       self.curr_ep_reward = 0
@@ -84,6 +90,7 @@ class DQNLogger(Logger):
       self.curr_ep_loss = []
       self.curr_ep_max_height = 1
       self.curr_action_summary = np.array([0] * 4)
+      self.curr_ep_exploration_rate = []
 
 # Epoch based compared to DQN (episode based)
 class PGLogger(DQNLogger):

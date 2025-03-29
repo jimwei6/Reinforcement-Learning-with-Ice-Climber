@@ -12,7 +12,8 @@
         "reference": 10
       },
       "lives": {
-        "op": "negative"
+        "op": "less-than",
+        "reference": 3
       }
     }
   },

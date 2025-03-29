@@ -2,7 +2,7 @@
 import os
 import torch
 from torch import nn
-from torchrl.data import TensorDictReplayBuffer, LazyTensorStorage, TensorDictPrioritizedReplayBuffer
+from torchrl.data import TensorDictReplayBuffer, LazyTensorStorage, TensorDictPrioritizedReplayBuffer, LazyMemmapStorage
 from tensordict import TensorDict
 import numpy as np
 from collections import deque
@@ -20,17 +20,19 @@ class DQN(nn.Module):
                  lr = 1e-4,
                  start_learning=128,
                  replay_size=512,
-                 loss_fn=nn.MSELoss,
+                 loss_fn=nn.SmoothL1Loss,
                  name="DQN",
                  learn_per_n_steps=1,
                  buffer_device="cpu",
-                 device="cpu"):
+                 device="cpu",
+                 buffer_dir="./buffer"):
         super().__init__()
         self.device = device
         self.online_net = self.create_net(input_shape, output_dim).to(device=self.device)
         self.target_net = self.create_net(input_shape, output_dim).to(device=self.device)
         self.target_net.load_state_dict(self.online_net.state_dict())
-        self.memory = self.create_memory_buffer(replay_size=replay_size, device=buffer_device)
+        self.memory = self.create_memory_buffer(replay_size=replay_size, device=buffer_device, buffer_dir=buffer_dir)
+        self.buffer_dir = buffer_dir
         self.replay_size = replay_size
         self.optimizer = torch.optim.AdamW(self.online_net.parameters(), lr=lr, amsgrad=True)
         self.output_dim = output_dim
@@ -56,8 +58,8 @@ class DQN(nn.Module):
     def train(self):
         self.training = True
 
-    def create_memory_buffer(self, replay_size, device):
-        return TensorDictReplayBuffer(storage=LazyTensorStorage(replay_size, device=device))
+    def create_memory_buffer(self, replay_size=1000, device='cpu', buffer_dir='./buffer'):
+        return TensorDictReplayBuffer(storage=LazyMemmapStorage(replay_size, scratch_dir=buffer_dir, device=device, existsok=True))
 
     def create_net(self, input_shape, output_dim):
         c, h, w = input_shape
@@ -155,6 +157,7 @@ class DQN(nn.Module):
             return
         if len(self.memory) < self.start_learning:
             return
+        
         if self.steps % self.learn_per_n_steps == 0:
             loss = self.update_online()
             self.soft_update_target()
@@ -173,8 +176,6 @@ class DQN(nn.Module):
               'online': self.online_net.state_dict(), 
               'target': self.target_net.state_dict(),
               'exploration_rate': self.exploration_rate,
-              'output_dim': self.output_dim,
-              'batch_size': self.batch_size,
               'gamma': self.gamma,
               'tau': self.tau,
               'exploration_rate_decay': self.exploration_rate_decay,
@@ -184,12 +185,10 @@ class DQN(nn.Module):
               'steps': self.steps,
               'start_learning': self.start_learning,
               'loss_fn': self.loss_fn.__class__.__name__,
-              'name': self.name,
               'learn_per_n_steps': self.learn_per_n_steps,
               'optimizer': self.optimizer.state_dict(),
               'episode': episode,
-              'lr': self.lr,
-              'replay_size': self.replay_size
+              'lr': self.lr
         }
 
     def load(self, path):
@@ -205,8 +204,6 @@ class DQN(nn.Module):
         self.target_net.load_state_dict(checkpoint['target'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.exploration_rate = checkpoint['exploration_rate']
-        self.output_dim = checkpoint['output_dim']
-        self.batch_size = checkpoint['batch_size']
         self.gamma = checkpoint['gamma']
         self.tau = checkpoint['tau']
         self.exploration_rate_decay = checkpoint['exploration_rate_decay']
@@ -215,13 +212,11 @@ class DQN(nn.Module):
         self.exploration_rate = checkpoint['exploration_rate']
         self.steps = checkpoint['steps']
         self.start_learning = checkpoint['start_learning']
-        self.name = checkpoint['name']
         self.learn_per_n_steps = checkpoint['learn_per_n_steps']
         loss_fn_class = getattr(torch.nn, checkpoint['loss_fn'])
         self.loss_fn = loss_fn_class()
         self.lr = checkpoint['lr']
-        self.replay_size = checkpoint['replay_size']
-        self.memory = self.create_memory_buffer(replay_size=self.replay_size, device=self.device)
+        self.memory = self.create_memory_buffer(replay_size=self.replay_size, device=self.buffer_device, buffer_dir=self.buffer_dir)
 
 
 class PRDQN(DQN):
@@ -241,7 +236,8 @@ class PRDQN(DQN):
                  name="PRDQN",
                  learn_per_n_steps=1,
                  buffer_device="cpu",
-                 device="cpu"):
+                 device="cpu",
+                 buffer_dir="./buffer"):
         super().__init__(input_shape,
                           output_dim,
                           eps_start = eps_start,
@@ -257,11 +253,12 @@ class PRDQN(DQN):
                           name=name,
                           learn_per_n_steps=learn_per_n_steps,
                           buffer_device=buffer_device,
-                          device=device)
+                          device=device,
+                          buffer_dir=buffer_dir)
         self.loss_fn = loss_fn(reduction="none")
     # Prioritized replay buffer
-    def create_memory_buffer(self, replay_size, device):
-        return TensorDictPrioritizedReplayBuffer(storage=LazyTensorStorage(replay_size, device=device), alpha=0.5, beta=0.4)
+    def create_memory_buffer(self, replay_size, device, buffer_dir):
+        return TensorDictPrioritizedReplayBuffer(storage=LazyMemmapStorage(replay_size, device=device, scratch_dir=buffer_dir), alpha=0.5, beta=0.4)
     
     def cache(self, obs, next_obs, action, action_num, reward, done):
         with torch.no_grad():
@@ -367,7 +364,8 @@ class DuelingPRDQN(PRDQN):
                  name="DuelingPRDQN",
                  learn_per_n_steps=1,
                  buffer_device="cpu",
-                 device="cpu"):
+                 device="cpu",
+                 buffer_dir="./buffer"):
         super().__init__(input_shape,
                           output_dim,
                           eps_start = eps_start,
@@ -383,7 +381,8 @@ class DuelingPRDQN(PRDQN):
                           name=name,
                           learn_per_n_steps=learn_per_n_steps,
                           buffer_device=buffer_device,
-                          device=device)
+                          device=device,
+                          buffer_dir=buffer_dir)
     def create_net(self, input_shape, output_dim):
         return ValueAdvantageNet(input_shape, output_dim)
 
@@ -405,7 +404,8 @@ class NstepDuelingPRDQN(DuelingPRDQN):
                  learn_per_n_steps=1,
                  n_steps=6,
                  buffer_device="cpu",
-                 device="cpu"):
+                 device="cpu",
+                 buffer_dir="./buffer"):
         super().__init__(input_shape,
                           output_dim,
                           eps_start = eps_start,
@@ -421,7 +421,8 @@ class NstepDuelingPRDQN(DuelingPRDQN):
                           name=name,
                           learn_per_n_steps=learn_per_n_steps,
                           buffer_device=buffer_device,
-                          device=device)
+                          device=device,
+                          buffer_dir=buffer_dir)
         self.n_steps = n_steps
         self.n_step_buffer = deque()
 
@@ -518,12 +519,13 @@ class NstepDuelingPRDQN(DuelingPRDQN):
 
 
 class DQN_CARTPOLE(DQN):
-    def __init__(self, input_shape, output_dim=2, eps_start=0.95, eps_end=0.05, eps_decay=1000, batch_size=64,
-                  gamma=0.95, tau=0.005, lr=0.0001, start_learning=128, replay_size=512, loss_fn=nn.MSELoss,
+    def __init__(self, input_shape, output_dim=2, eps_start=0.95, eps_end=0.05, eps_decay=10000, batch_size=64,
+                  gamma=0.95, tau=0.005, lr=0.01, start_learning=128, replay_size=512, loss_fn=nn.SmoothL1Loss,
                   name="DQN", learn_per_n_steps=1,
-                  device="cuda", buffer_device="cuda"):
+                  device="cuda", buffer_device="cpu",
+                  buffer_dir="./buffer"):
         super().__init__(input_shape, output_dim, eps_start, eps_end, eps_decay, batch_size, gamma, tau, lr, start_learning,
-                          replay_size, loss_fn, name, learn_per_n_steps, device=device, buffer_device=buffer_device)
+                          replay_size, loss_fn, name, learn_per_n_steps, device=device, buffer_device=buffer_device, buffer_dir=buffer_dir)
 
     def create_net(self, input_shape, output_dim):
         return nn.Sequential(

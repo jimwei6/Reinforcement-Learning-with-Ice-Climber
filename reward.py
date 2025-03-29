@@ -73,4 +73,30 @@ class SparseRewardTracker():
                     landing_reward = -5
                         
         rew = landing_reward + height_reward + alive_reward + hammer_penalty
-        return max(min(rew, 30), -30) # scale down for unit reward of 1 per step
+        return max(min(rew, 30), -30)/30 # scale down for unit reward of 1 per step
+    
+class DQNRewardTracker():
+    def __init__(self):
+        super().__init__()
+
+    def calculate_reward(self, info, next_info, truncated, terminated, action):
+        delta = self.calculate_info_delta(info, next_info)
+        delta = self.update(info, next_info, truncated, terminated, action, delta)
+
+        landing_reward = 0 # signal for landing on jumps
+        alive_reward = 0 # signal for living / dying
+        height_reward = 0 # signal for changing height
+        hammer_penalty = -1 if delta['hammer_hit'] else 0
+        
+        if terminated:
+            alive_reward = -1000
+        else:
+            alive_reward = 10 if not delta['still'] else 1
+            if delta['landed']: 
+                if delta['jump_net_height'] > 0: # effective jumps
+                    landing_reward = 100 * (next_info['height'] - 1) # [100 - 1000] based on height 
+                elif delta['jump_net_height'] < 0: # jumping downwards
+                    landing_reward = -10
+                        
+        rew = landing_reward + height_reward + alive_reward + hammer_penalty
+        return max(min(rew / 100, 10), -10)/100 # scale down to [-1, 1] (only termination or effective jumps will be [-10, 10])

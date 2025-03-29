@@ -10,11 +10,20 @@ from reward import SparseRewardTracker
 import numpy as np
 import argparse
 import torch
+import random
+
+# Seed for now
+seed = 42
+np.random.seed(seed)
+random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
 
 def make_env(rewardTracker, max_episodes=None, restricted_actions=retro.Actions.FILTERED, gray_scale=False, resize=None,
               skip_frames=4, video_episode=None, video_dir=None, render_mode="rgb_array"):
     env = retro.make('IceClimber-Nes', retro.State.DEFAULT, use_restricted_actions=restricted_actions, players=1, render_mode=render_mode)
     env = NormalizeObservation(env, shape=resize)
+    env = NoopResetEnv(env)
     if max_episodes is not None: # add max episode length
         env = TimeLimit(env, max_episode_steps=max_episodes * skip_frames)
     if gray_scale:
@@ -33,7 +42,7 @@ def main(AGENT_CLASS, REWARD_CLASS, DIR, CHECKPOINT=None, SAVE_EVERY=50,
     # make environment
 
     env = make_env(rewardTracker, max_episodes=2500, gray_scale=not RGB, resize=(88, 88), video_episode=VIDEO_EPISODE, video_dir=VIDEO_DIR, render_mode=RENDER_MODE)
-    obs, info = env.reset()
+    obs, info = env.reset(seed=seed)
 
     # make agent
     agent = AGENT_CLASS(obs.shape, lr=LR, lr_scheduler=scheduler)
