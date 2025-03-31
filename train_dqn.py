@@ -5,7 +5,7 @@ from gymnasium.wrappers.time_limit import TimeLimit
 from DQN import DQN, PRDQN, DuelingPRDQN, NstepDuelingPRDQN, DuelingDQN, NstepDuelingDQN
 from gymnasium.wrappers import RecordVideo
 from logger import DQNLogger
-from reward import SparseRewardTracker, DQNRewardTracker
+from reward import SparseRewardTracker, IntermediateRewardTracker
 import numpy as np
 import argparse
 import torch
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     parser.add_argument("--dir", type=str, default="./dqn_results", help="path to store results")
     parser.add_argument("--checkpoint", type=str, default=None, help="path to checkpoint")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
-    parser.add_argument("--reward", type=str, choices=["DQN", "SPARSE"], default="DQN", help="Select the reward variant")
+    parser.add_argument("--reward", type=str, choices=["INT", "SPARSE"], default="DQN", help="Select the reward variant")
     parser.add_argument('--rgb', action='store_true', help="Convert environment to grayscale")
     parser.add_argument('--episodes', type=int, default=1000, help="episodes to train for")
     parser.add_argument("--memory", type=int, default=512, help="Replay Memory Size")
@@ -132,7 +132,7 @@ if __name__ == "__main__":
 
     reward_classes = {
         "SPARSE": SparseRewardTracker,
-        "DQN": DQNRewardTracker
+        "INT": IntermediateRewardTracker
     }
     RENDER_MODE = "human" if args.render else "rgb_array"
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

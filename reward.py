@@ -75,7 +75,7 @@ class SparseRewardTracker():
         rew = landing_reward + height_reward + alive_reward + hammer_penalty
         return max(min(rew, 30), -30)/30 # scale down for unit reward of 1 per step
     
-class DQNRewardTracker():
+class IntermediateRewardTracker():
     def __init__(self):
         super().__init__()
 
@@ -85,18 +85,23 @@ class DQNRewardTracker():
 
         landing_reward = 0 # signal for landing on jumps
         alive_reward = 0 # signal for living / dying
-        height_reward = 0 # signal for changing height
+        height_reward = 0 # signal for successfully changing height
         hammer_penalty = -1 if delta['hammer_hit'] else 0
-        
+        brick_reward = 1 if delta['bricks_hit'] > 0 else 0
+        change_height_reward = 0 # intermediate height change signal
+
         if terminated:
-            alive_reward = -1000
+            alive_reward = -100
         else:
-            alive_reward = 10 if not delta['still'] else 1
+            alive_reward = (next_info['height'] )**2 / 10 + 10 if not delta['still'] else 0 # [10 - 20 based on height], 0 if still
             if delta['landed']: 
                 if delta['jump_net_height'] > 0: # effective jumps
-                    landing_reward = 100 * (next_info['height'] - 1) # [100 - 1000] based on height 
-                elif delta['jump_net_height'] < 0: # jumping downwards
-                    landing_reward = -10
-                        
-        rew = landing_reward + height_reward + alive_reward + hammer_penalty
-        return max(min(rew / 100, 10), -10)/100 # scale down to [-1, 1] (only termination or effective jumps will be [-10, 10])
+                    landing_reward = 10 * (next_info['height'] - 1) # [10 ~ 100] based on height 
+            
+            if delta['height'] > 0: # intermediate height reward
+                change_height_reward = 10 * (next_info['height'] - 1) # [10 ~ 100] based on height
+            elif delta['height'] < 0: # intermediate fall reward
+                change_height_reward = -5 * (next_info['height'] - 1) # [-5 ~ -50] based on height
+                 
+        rew = landing_reward + height_reward + alive_reward + hammer_penalty + brick_reward + change_height_reward
+        return max(min(rew / 10, 10), -10)
