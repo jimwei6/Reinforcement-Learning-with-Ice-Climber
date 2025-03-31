@@ -75,7 +75,7 @@ class SparseRewardTracker():
         rew = landing_reward + height_reward + alive_reward + hammer_penalty
         return max(min(rew, 30), -30)/30 # scale down for unit reward of 1 per step
     
-class IntermediateRewardTracker():
+class IntermediateRewardTracker(SparseRewardTracker):
     def __init__(self):
         super().__init__()
 
