@@ -2,7 +2,7 @@
 
 ## Setup
 
-Clone this repository and then follow stable-retro (https://github.com/Farama-Foundation/stable-retro) for set up. Read the installation and example sections. Then, copy files in IceClimber-Custom into "stable-retro/retro/data/stable/IceClimber-Nes" directory to import the modified variables and environment files.
+Clone this repository and then follow stable-retro (https://github.com/Farama-Foundation/stable-retro) for set up. Read the installation and example sections. Then, copy files in IceClimber-Custom into "stable-retro/retro/data/stable/IceClimber-Nes" directory to import the modified variables and environment files. Install moviepy python package for video recording.
 
 Run the following to register the environment in the module
   ```
