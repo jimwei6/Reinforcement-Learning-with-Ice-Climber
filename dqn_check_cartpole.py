@@ -5,7 +5,7 @@ import gymnasium as gym
 
 from DQN import DQN_CARTPOLE
 from logger import PGLogger
-from reward import SparseRewardTracker, ComplexRewardTracker
+from reward import SparseRewardTracker
 import numpy as np
 import argparse
 import torch
@@ -30,7 +30,7 @@ def main(DEVICE="cuda", LR=1e-2, EPISODES=500, scheduler=False):
         #     print(l)
         rew.append(r)
         if episode % 10 == 0:
-            print(np.mean(rew[episode - 10:episode]))
+            print(np.mean(rew[episode - 10:episode]), agent.exploration_rate)
             
         
     env.close()
