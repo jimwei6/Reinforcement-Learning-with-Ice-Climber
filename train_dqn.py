@@ -2,7 +2,7 @@
 import retro
 from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopResetEnv, FrameStackMod, CustomRewardWrapper
 from gymnasium.wrappers.time_limit import TimeLimit
-from DQN import DQN, PRDQN, DuelingPRDQN, NstepDuelingPRDQN
+from DQN import DQN, PRDQN, DuelingPRDQN, NstepDuelingPRDQN, DuelingDQN, NstepDuelingDQN
 from gymnasium.wrappers import RecordVideo
 from logger import DQNLogger
 from reward import SparseRewardTracker, DQNRewardTracker
@@ -105,7 +105,7 @@ def main(agent_class, REWARD_CLASS, dir, checkpoint=None, SAVE_EVERY=100, DEVICE
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent", type=str, choices=["DQN", "PRDQN", "DuelingPRDQN", "NstepDuelingPRDQN"], default="NstepDuelingPRDQN", help="Select the DQN variant")
+    parser.add_argument("--agent", type=str, choices=["DQN", "PRDQN", "DuelingDQN", "NstepDuelingDQN", "DuelingPRDQN", "NstepDuelingPRDQN"], default="NstepDuelingPRDQN", help="Select the DQN variant")
     parser.add_argument("--dir", type=str, default="./dqn_results", help="path to store results")
     parser.add_argument("--checkpoint", type=str, default=None, help="path to checkpoint")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
@@ -124,8 +124,10 @@ if __name__ == "__main__":
     agent_classes = {
         "DQN": DQN,
         "PRDQN": PRDQN,
+        "DuelingDQN": DuelingDQN,
         "DuelingPRDQN": DuelingPRDQN,
         "NstepDuelingPRDQN": NstepDuelingPRDQN,
+        "NstepDuelingDQN": NstepDuelingDQN
     }
 
     reward_classes = {
