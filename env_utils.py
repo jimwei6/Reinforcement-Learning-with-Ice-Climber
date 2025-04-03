@@ -11,7 +11,11 @@ class FrameStackMod(FrameStack):
 
     def observation(self, observation):
         lazyframes = super().observation(observation)
-        return torch.tensor(lazyframes.__array__())
+        arr = torch.tensor(lazyframes.__array__())
+        if len(arr.shape) == 4: # rgb 
+            return arr.view(arr.shape[0] * arr.shape[1], *arr.shape[2:]) # reshape rbg to stacked (num_stack * channels, height, width)
+        else:
+          return arr
 
 class CustomRewardWrapper(gym.Wrapper):
     def __init__(self, env, reward_tracker):

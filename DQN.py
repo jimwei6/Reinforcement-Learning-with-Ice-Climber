@@ -258,7 +258,7 @@ class PRDQN(DQN):
         self.loss_fn = loss_fn(reduction="none")
     # Prioritized replay buffer
     def create_memory_buffer(self, replay_size, device, buffer_dir):
-        return TensorDictPrioritizedReplayBuffer(storage=LazyMemmapStorage(replay_size, device=device, scratch_dir=buffer_dir), alpha=0.5, beta=0.4)
+        return TensorDictPrioritizedReplayBuffer(storage=LazyMemmapStorage(replay_size, device=device, scratch_dir=buffer_dir, existsok=True), alpha=0.5, beta=0.4)
     
     def cache(self, obs, next_obs, action, action_num, reward, done):
         with torch.no_grad():
@@ -621,7 +621,7 @@ class NstepDuelingPRDQN(DuelingPRDQN):
                           "action_num": init_step_action_num.to(self.buffer_device),
                           "reward": n_step_reward.to(self.buffer_device),
                           "done": n_step_done.to(self.buffer_device),
-                          "td_error": td_error.to(self.buffer_device), 
+                          "td_error": td_error, 
                           "step": torch.tensor([steps]).to(self.buffer_device)}, batch_size=[]))
         else:
             self.memory.add(TensorDict({

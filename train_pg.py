@@ -4,9 +4,9 @@ from env_utils import FrameSkip, GrayEnvironment, NormalizeObservation, NoopRese
 from gymnasium.wrappers.time_limit import TimeLimit
 from gymnasium.wrappers import RecordVideo
 
-from PG import VPG, AdvantageActorCritic
+from PG import VPG, AdvantageActorCritic, PPO, VPGHeightInfo
 from logger import PGLogger
-from reward import SparseRewardTracker
+from reward import SparseRewardTracker, IntermediateRewardTracker
 import numpy as np
 import argparse
 import torch
@@ -55,7 +55,7 @@ def main(AGENT_CLASS, REWARD_CLASS, DIR, CHECKPOINT=None, SAVE_EVERY=50,
     logger = PGLogger(f"{DIR}/{agent.name}/stats.json")
 
     for episode in range(EPISODES):
-        batch_loss = 0
+        batch_loss = [0, 0]
         for batch in range(TRAJ_BATCH_SIZE):
             # reset env
             obs, info = env.reset()
@@ -69,10 +69,15 @@ def main(AGENT_CLASS, REWARD_CLASS, DIR, CHECKPOINT=None, SAVE_EVERY=50,
             ep_rewards = []
             entropies = []
             value_preds = []
-            
+            states = []
+            actions = []
             while True:
                 # get action and perform
-                action, log_prob_action, entropy, value_pred, probs = agent.act(obs)
+                action, log_prob_action, entropy, value_pred, probs, action_num = agent.act(obs, torch.tensor(1 if len(info) < 1 else info['height']).to(DEVICE))
+                states.append(obs)
+                actions.append(action_num)
+
+                # step environment
                 next_obs, reward, terminated, truncated, next_info  = env.step(action[0], info)
                 done = terminated or truncated
                 info = next_info  
@@ -102,13 +107,18 @@ def main(AGENT_CLASS, REWARD_CLASS, DIR, CHECKPOINT=None, SAVE_EVERY=50,
                     break
             # log episode
             logger.log_episode(ending)
-            batch_loss += agent.optimize(torch.cat(log_prob_actions),
+            policy_loss, value_loss = agent.optimize(torch.cat(log_prob_actions),
                                         ep_rewards,
                                         torch.cat(entropies),
                                         torch.cat(value_preds) if len(value_preds) else None,
+                                        states=states,
+                                        actions=actions,
                                         zero_grad=batch==0,
                                         batch_size=TRAJ_BATCH_SIZE,
                                         optimizer_step=False) # accumulate gradient across batch
+            batch_loss[0] += policy_loss
+            if value_loss is not None:
+                batch_loss[1] += value_loss
         # optimize model on accumulated gradients
         agent.optimize_step()
         logger.log_batch(batch_loss)
@@ -120,8 +130,8 @@ def main(AGENT_CLASS, REWARD_CLASS, DIR, CHECKPOINT=None, SAVE_EVERY=50,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent", type=str, choices=["VPG", "AAC"], default="VPG", help="Select the policy gradient variant")
-    parser.add_argument("--reward", type=str, choices=["SPARSE"], default="SPARSE", help="Select the reward variant")
+    parser.add_argument("--agent", type=str, choices=["VPG", "AAC", "PPO", "VPGHEIGHT"], default="VPG", help="Select the policy gradient variant")
+    parser.add_argument("--reward", type=str, choices=["SPARSE", "INT"], default="SPARSE", help="Select the reward variant")
     parser.add_argument("--dir", type=str, default="./pg_results", help="path to store results")
     parser.add_argument("--checkpoint", type=str, default=None, help="path to checkpoint")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
@@ -135,10 +145,13 @@ if __name__ == "__main__":
     
     agent_classes = {
         "VPG": VPG,
-        "AAC": AdvantageActorCritic
+        "AAC": AdvantageActorCritic,
+        "PPO": PPO,
+        "VPGHEIGHT": VPGHeightInfo
     }
     reward_classes = {
-        "SPARSE": SparseRewardTracker
+        "SPARSE": SparseRewardTracker,
+        "INT": IntermediateRewardTracker
     }
     RENDER_MODE = "human" if args.render else "rgb_array"
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

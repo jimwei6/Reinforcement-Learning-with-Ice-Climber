@@ -28,6 +28,7 @@ class VPG(nn.Module):
         self.training = False
         self.gamma = gamma
         self.beta = beta
+        self.include_height_info = False
 
     def eval(self):
         self.training = False
@@ -52,15 +53,15 @@ class VPG(nn.Module):
             nn.Softmax(dim=-1)
         )
     
-    def act(self, obs):
+    def act(self, obs, height=None):
         obs = obs # (1, C, H, W)
-        probs = self.policy(obs)
+        probs = self.policy(obs, height) if self.include_height_info else self.policy(obs)
         action_dist = Categorical(probs)
         action_num = action_dist.sample()
         log_prob_action = action_dist.log_prob(action_num)
         entropy = action_dist.entropy()
         actions = self.convert_nums_to_actions([action_num.item()])
-        return actions, log_prob_action, entropy, None, probs.clone().detach().cpu().numpy()
+        return actions, log_prob_action, entropy, None, probs.clone().detach().cpu().numpy(), action_num.item()
 
     def convert_nums_to_actions(self, nums):
         res = []
@@ -85,7 +86,7 @@ class VPG(nn.Module):
         loss = -(log_prob_actions * weights).sum() - entropies.mean() * self.beta
         return loss
     
-    def optimize(self, log_prob_actions, episode_rewards, entropies, values=None, zero_grad=True, batch_size=1, optimizer_step=True):
+    def optimize(self, log_prob_actions, episode_rewards, entropies, values=None, zero_grad=True, batch_size=1, optimizer_step=True, states=None, actions=None):
         if zero_grad:
             self.optimizer.zero_grad()
 
@@ -94,7 +95,7 @@ class VPG(nn.Module):
         policy_loss.backward()
         if optimizer_step:
             self.optimize_step()
-        return policy_loss.item()
+        return policy_loss.item(), None
 
     def optimize_step(self):
         self.optimizer.step()
@@ -138,6 +139,42 @@ class VPG(nn.Module):
         self.beta = checkpoint['beta']
         if checkpoint['scheduler'] and self.scheduler is not None:
             self.scheduler.load_state_dict(checkpoint['scheduler'])
+
+class VPGHeightInfo(VPG):
+    def __init__(self, input_shape, output_dim=9, lr=0.00001, name="VPGHEIGHT", gamma=0.99, beta=0.01, lr_scheduler=False):
+        super().__init__(input_shape, output_dim, lr, name, gamma, beta, lr_scheduler)
+        self.include_height_info = True
+
+    def create_net(self, input_shape, output_dim):
+        return HeightInfoNet(input_shape, output_dim)
+
+class HeightInfoNet(nn.Module):
+    def __init__(self, input_shape, output_dim):
+        super().__init__()
+        c, h, w = input_shape
+        self.convnet = nn.Sequential(
+            nn.Conv2d(in_channels=c, out_channels=16, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2), 
+            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Flatten()
+        )
+
+        self.mlp = nn.Sequential(
+            nn.Linear(8 * 11 * 11 + 11, output_dim), 
+            nn.Softmax(dim=-1)
+            )
+    
+    def forward(self, obs, height):
+        conv = self.convnet(obs)
+        one_hot = nn.functional.one_hot(height, num_classes=11).unsqueeze(0)
+        cat = torch.cat((conv, one_hot), dim=1)
+        return self.mlp(cat)
 
 class ActorCritic(nn.Module):
     def __init__(self, input_shape, output_dim):
@@ -184,6 +221,7 @@ class ActorCritic(nn.Module):
         value = self.value_net(obs)
         return action_probs, value
 
+
 # Vanilla actor critic
 class AdvantageActorCritic(VPG):
     def __init__(self,
@@ -209,30 +247,85 @@ class AdvantageActorCritic(VPG):
         mse = nn.MSELoss()
         return mse(values, returns)
     
-    def act(self, obs):
+    def act(self, obs, height=None):
         obs = obs.to(device=self.device) # (1, C, H, W)
-        action_probs, value = self.policy(obs)
+        action_probs, value = self.policy(obs, height) if self.include_height_info else self.policy(obs)
         action_dist = Categorical(action_probs)
         action_num = action_dist.sample()
         log_prob_action = action_dist.log_prob(action_num)
         entropy = action_dist.entropy()
         actions = self.convert_nums_to_actions([action_num.item()])
-        return actions, log_prob_action, entropy, value.flatten(), action_probs.clone().detach().cpu().numpy()
+        return actions, log_prob_action, entropy, value.flatten(), action_probs.clone().detach().cpu().numpy(), action_num.item()
     
-    def optimize(self, log_prob_actions, episode_rewards, entropies, values, zero_grad=True, batch_size=1, optimizer_step=True):
+    def optimize(self, log_prob_actions, episode_rewards, entropies, values, zero_grad=True, batch_size=1, optimizer_step=True, states=None, actions=None):
         if zero_grad:
             self.optimizer.zero_grad()
 
-        returns = self.compute_returns(episode_rewards)
-        policy_loss = self.policy_loss(log_prob_actions, returns, entropies)
-        value_loss = self.value_loss(values, returns)
-        loss = (policy_loss + 0.5 * value_loss) / batch_size
-        loss.backward()
+        returns = self.compute_returns(episode_rewards).detach()
+        policy_loss = self.policy_loss(log_prob_actions, returns, entropies) / batch_size
+        value_loss = self.value_loss(values, returns) / batch_size
+        policy_loss.backward()
+        value_loss.backward()
+
         if optimizer_step:
             self.optimize_step()
-        return loss.item()              
-    
+        return policy_loss.item(), value_loss.item()
 
+class PPO(AdvantageActorCritic):
+    def __init__(self,
+                 input_shape,
+                 output_dim=9,
+                 lr = 1e-5,
+                 name="AAC",
+                 gamma=0.99,
+                 beta=0.01,
+                 lr_scheduler=False,
+                 ppo_clip=0.2,
+                 ppo_steps=5):
+        super().__init__(input_shape,
+                 output_dim=output_dim,
+                 lr = lr,
+                 name=name,
+                 gamma=gamma,
+                 beta=beta,
+                 lr_scheduler=lr_scheduler)
+        self.ppo_clip = ppo_clip
+        self.ppo_steps = ppo_steps
+    
+    def compute_advantages(returns, values):
+        adv = returns - values
+        return adv
+    
+    def policy_loss(self, obj_1, obj_2):
+        return torch.min(obj_1, obj_2).sum()
+
+    def optimize(self, log_prob_actions, episode_rewards, entropies, values, actions=None, states=None, zero_grad=None, batch_size=None, optimizer_step=None):
+        returns = self.compute_returns(episode_rewards).detach()
+        adv = self.compute_advantages(returns, values).detach()
+        old_log_probs = log_prob_actions.detach()
+
+        total_policy_loss = 0
+        total_value_loss = 0
+        for _ in range(self.ppo_steps):
+            n_action_probs, n_values = self.policy(states)
+            action_dist = Categorical(n_action_probs)
+            new_log_prob_actions = action_dist.log_prob(actions)
+            ratio = (new_log_prob_actions - old_log_probs).exp()
+
+            p_loss_1 = ratio * adv
+            p_loss_2 = torch.clamp(ratio, min = 1.0 - self.ppo_clip, max = 1 + self.ppo_clip) * adv   
+
+            policy_loss = self.policy_loss(p_loss_1, p_loss_2)
+            value_loss = self.value_loss(n_values, returns)
+            
+            self.optimizer.zero_grad()
+            policy_loss.backward()
+            value_loss.backward()
+            self.optimize_step()
+            total_policy_loss += policy_loss.item()
+            total_value_loss += value_loss.item()
+        return total_policy_loss / self.ppo_steps, total_value_loss / self.ppo_steps
+    
 # Sanity Check
 class VPGCartPole(VPG):
     def __init__(self, input_shape, output_dim=2, lr=0.01, name="VPG", gamma=0.99, beta=0.01, lr_scheduler=False):
@@ -247,9 +340,9 @@ class VPGCartPole(VPG):
             nn.Softmax(dim=-1)
         )
     
-    def act(self, obs):
+    def act(self, obs, height=None):
         obs = obs.to(device=self.device) # (1, C, H, W)
-        probs = self.policy(obs)
+        probs = self.policy(obs, height) if self.include_height_info else self.policy(obs)
         action_dist = Categorical(probs)
         action_num = action_dist.sample()
         log_prob_action = action_dist.log_prob(action_num)

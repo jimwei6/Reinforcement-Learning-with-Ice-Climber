@@ -18,15 +18,6 @@ class SparseRewardTracker():
         self.curr_ep_length = 0
         self.curr_ep_max_height = 1
         self.jump = False
-        # self.total_jumps = 0
-        # self.total_hits = 0
-        # self.height_bricks_hit = {}
-        # self.height_jumps = {}
-        # self.height_hammer_hits = {}
-        # for i in range(20):
-        #     self.height_bricks_hit[i] = 0
-        #     self.height_jumps[i] = 0
-        #     self.height_hammer_hits[i] = 0
 
     def update(self, info, next_info, truncated, terminated, action, delta):
         new_delta = delta.copy()
@@ -60,20 +51,20 @@ class SparseRewardTracker():
         landing_reward = 0 # signal for landing on jumps
         alive_reward = 0 # signal for living / dying
         height_reward = 0 # signal for changing height
-        hammer_penalty = -1 if delta['hammer_hit'] else 0
+        hammer_penalty = -0.01 if delta['hammer_hit'] else 0
         
         if terminated:
-            alive_reward = -30
+            alive_reward = -1
         else:
-            alive_reward = (next_info['height'] )**2 / 10 + 10 if not delta['still'] else 0 # [10 - 20 based on height], 0 if still
+            alive_reward = (next_info['height'] )**2 / 100 if not delta['still'] else 0 # parabolic increase from [0.01 (height 1) - 1 (height 10)]
             if delta['landed']: 
                 if delta['jump_net_height'] > 0: # effective jumps
-                    landing_reward = 1 * (next_info['height'] - 1) # [1 - 10] based on height 
+                    landing_reward = 1
                 elif delta['jump_net_height'] < 0: # jumping downwards
-                    landing_reward = -5
+                    landing_reward = -0.01
                         
         rew = landing_reward + height_reward + alive_reward + hammer_penalty
-        return max(min(rew, 30), -30)/30 # scale down for unit reward of 1 per step
+        return max(min(rew, 1), -1)
     
 class IntermediateRewardTracker(SparseRewardTracker):
     def __init__(self):
@@ -86,22 +77,22 @@ class IntermediateRewardTracker(SparseRewardTracker):
         landing_reward = 0 # signal for landing on jumps
         alive_reward = 0 # signal for living / dying
         height_reward = 0 # signal for successfully changing height
-        hammer_penalty = -1 if delta['hammer_hit'] else 0
-        brick_reward = 1 if delta['bricks_hit'] > 0 else 0
+        hammer_penalty = -0.01 if delta['hammer_hit'] else 0
+        brick_reward = 0.05 if delta['bricks_hit'] > 0 else 0
         change_height_reward = 0 # intermediate height change signal
 
         if terminated:
-            alive_reward = -100
+            alive_reward = -1
         else:
-            alive_reward = (next_info['height'] )**2 / 10 + 10 if not delta['still'] else 0 # [10 - 20 based on height], 0 if still
+            alive_reward = (next_info['height'] )**2 / 100 if not delta['still'] else 0 
             if delta['landed']: 
                 if delta['jump_net_height'] > 0: # effective jumps
-                    landing_reward = 10 * (next_info['height'] - 1) # [10 ~ 100] based on height 
+                    landing_reward = 1
             
-            if delta['height'] > 0: # intermediate height reward
-                change_height_reward = 10 * (next_info['height'] - 1) # [10 ~ 100] based on height
-            elif delta['height'] < 0: # intermediate fall reward
-                change_height_reward = -5 * (next_info['height'] - 1) # [-5 ~ -50] based on height
+            if delta['height'] > 0: # intermediate height change reward
+                change_height_reward = 1
+            elif delta['height'] < 0: # intermediate fall change reward
+                change_height_reward = -0.5
                  
         rew = landing_reward + height_reward + alive_reward + hammer_penalty + brick_reward + change_height_reward
-        return max(min(rew / 10, 10), -10)
+        return max(min(rew, 1), -1)
