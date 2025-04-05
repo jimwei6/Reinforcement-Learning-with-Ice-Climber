@@ -300,7 +300,7 @@ class PRDQN(DQN):
             online_next_actions = torch.argmax(self.online_net(next_obs), axis=1)
             target_next_values = self.target_net(next_obs).gather(1, online_next_actions.unsqueeze(1))
         td_target = reward + (1 - done) * self.gamma * target_next_values
-        td_error = self.loss_fn(td_estimate, td_target).flatten()
+        td_error = self.loss_fn(td_estimate, td_target).view(-1)
         loss = (weights * td_error).mean()
         self.optimizer.zero_grad()
         loss.backward()
@@ -520,7 +520,7 @@ class NstepDuelingDQN(DuelingDQN):
             online_n_step_next_actions = torch.argmax(self.online_net(n_step_next_obs), axis=1)
             target_n_step_next_values = self.target_net(n_step_next_obs).gather(1, online_n_step_next_actions.unsqueeze(1))
         td_target = reward + (1 - done) * (self.gamma ** steps) * target_n_step_next_values
-        loss = self.loss_fn(td_estimate, td_target).flatten()
+        loss = self.loss_fn(td_estimate, td_target).view(-1)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -650,7 +650,7 @@ class NstepDuelingPRDQN(DuelingPRDQN):
             online_n_step_next_actions = torch.argmax(self.online_net(n_step_next_obs), axis=1)
             target_n_step_next_values = self.target_net(n_step_next_obs).gather(1, online_n_step_next_actions.unsqueeze(1))
         td_target = reward + (1 - done) * (self.gamma ** steps) * target_n_step_next_values
-        td_error = self.loss_fn(td_estimate, td_target).flatten()
+        td_error = self.loss_fn(td_estimate, td_target).view(-1)
         loss = (weights * td_error).mean()
         self.optimizer.zero_grad()
         loss.backward()

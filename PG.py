@@ -20,7 +20,7 @@ class VPG(nn.Module):
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.policy = self.create_net(input_shape, output_dim).to(device=self.device)
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr, amsgrad=True)
+        self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, 50, gamma=0.5) if lr_scheduler else None
         self.output_dim = output_dim
         self.name = name
@@ -255,7 +255,7 @@ class AdvantageActorCritic(VPG):
         log_prob_action = action_dist.log_prob(action_num)
         entropy = action_dist.entropy()
         actions = self.convert_nums_to_actions([action_num.item()])
-        return actions, log_prob_action, entropy, value.flatten(), action_probs.clone().detach().cpu().numpy(), action_num.item()
+        return actions, log_prob_action, entropy, value.view(-1), action_probs.clone().detach().cpu().numpy(), action_num.item()
     
     def optimize(self, log_prob_actions, episode_rewards, entropies, values, zero_grad=True, batch_size=1, optimizer_step=True, states=None, actions=None):
         if zero_grad:
@@ -275,8 +275,8 @@ class PPO(AdvantageActorCritic):
     def __init__(self,
                  input_shape,
                  output_dim=9,
-                 lr = 1e-5,
-                 name="AAC",
+                 lr = 1e-4,
+                 name="PPO",
                  gamma=0.99,
                  beta=0.01,
                  lr_scheduler=False,
@@ -292,7 +292,18 @@ class PPO(AdvantageActorCritic):
         self.ppo_clip = ppo_clip
         self.ppo_steps = ppo_steps
     
-    def compute_advantages(returns, values):
+    def act(self, obs, height=None):
+        with torch.no_grad():
+          obs = obs.to(device=self.device) # (1, C, H, W)
+          action_probs, value = self.policy(obs, height) if self.include_height_info else self.policy(obs)
+          action_dist = Categorical(action_probs)
+          action_num = action_dist.sample()
+          log_prob_action = action_dist.log_prob(action_num)
+          entropy = action_dist.entropy()
+          actions = self.convert_nums_to_actions([action_num.item()])
+        return actions, log_prob_action, entropy, value.view(-1), action_probs.clone().detach().cpu().numpy(), action_num.item()
+    
+    def compute_advantages(self, returns, values):
         adv = returns - values
         return adv
     
@@ -302,7 +313,7 @@ class PPO(AdvantageActorCritic):
     def optimize(self, log_prob_actions, episode_rewards, entropies, values, actions=None, states=None, zero_grad=None, batch_size=None, optimizer_step=None):
         returns = self.compute_returns(episode_rewards).detach()
         adv = self.compute_advantages(returns, values).detach()
-        old_log_probs = log_prob_actions.detach()
+        old_log_probs = log_prob_actions
 
         total_policy_loss = 0
         total_value_loss = 0
@@ -314,9 +325,8 @@ class PPO(AdvantageActorCritic):
 
             p_loss_1 = ratio * adv
             p_loss_2 = torch.clamp(ratio, min = 1.0 - self.ppo_clip, max = 1 + self.ppo_clip) * adv   
-
             policy_loss = self.policy_loss(p_loss_1, p_loss_2)
-            value_loss = self.value_loss(n_values, returns)
+            value_loss = self.value_loss(n_values.view(-1), returns)
             
             self.optimizer.zero_grad()
             policy_loss.backward()
