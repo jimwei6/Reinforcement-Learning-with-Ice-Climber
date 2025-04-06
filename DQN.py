@@ -74,9 +74,7 @@ class DQN(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(32 * 11 * 11, output_dim), 
-            nn.Softmax(dim=-1)
-        )
+            nn.Linear(32 * 11 * 11, output_dim)        )
     
     def recall(self, batch_size):
         batch = self.memory.sample(batch_size)
