@@ -195,8 +195,7 @@ class ActorCritic(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Flatten(),
-            nn.Linear(8 * 11 * 11, 1), 
-            nn.Softmax(dim=-1)
+            nn.Linear(8 * 11 * 11, 1)
         )
     
     def create_policy_net(self, input_shape, output_dim):
